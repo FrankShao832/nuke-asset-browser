@@ -19,6 +19,9 @@ env/
 *.swp
 *.swo
 
+# Private — project planning docs, not for git
+plan/
+
 # Temp / cache
 *.log
 .tmp/
