@@ -52,6 +52,8 @@ class MainWindow(QWidget):
         self._init_ui()
         self._connect_signals()
         self._load_drafts(self._drafts)
+        # Apply default sort ("latest" first)
+        self._refresh()
 
     def _init_ui(self):
         self.setWindowTitle("Nuke Asset Browser")

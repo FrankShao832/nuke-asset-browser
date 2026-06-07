@@ -221,7 +221,7 @@ class ThumbnailCard(QFrame):
         type_label = QLabel(draft.draft_type.upper())
         type_label.setStyleSheet(f"""
             font-size: {FontSize.SMALL};
-            color: {Color.TEXT_MUTED};
+            color: #d4d4d4;
             background: {Color.BTN_NORMAL};
             border-radius: 2px;
             padding: 0 4px;
@@ -229,7 +229,7 @@ class ThumbnailCard(QFrame):
         meta.addWidget(type_label)
 
         author_label = QLabel(f"by {draft.author}")
-        author_label.setStyleSheet(Styles.label_small(Color.TEXT_SMALL))
+        author_label.setStyleSheet(Styles.label_small("#bbb"))
         meta.addWidget(author_label)
 
         meta.addStretch()
