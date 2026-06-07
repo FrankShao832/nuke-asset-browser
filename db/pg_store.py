@@ -29,29 +29,32 @@ _INSERT = """
     INSERT INTO browser.drafts
         (name, draft_type, path, author, status, visibility,
          favorite, description, tags, created_at, updated_at,
-         thumbnail_path, use_count)
+         thumbnail_path, use_count, frame_range, sequence_pattern)
     VALUES
         (%(name)s, %(draft_type)s, %(path)s, %(author)s, %(status)s,
          %(visibility)s, %(favorite)s, %(description)s, %(tags)s,
-         %(created_at)s, %(updated_at)s, %(thumbnail_path)s, %(use_count)s)
+         %(created_at)s, %(updated_at)s, %(thumbnail_path)s, %(use_count)s,
+         %(frame_range)s, %(sequence_pattern)s)
     RETURNING id
 """
 
 _UPDATE = """
     UPDATE browser.drafts SET
-        name          = %(name)s,
-        draft_type    = %(draft_type)s,
-        path          = %(path)s,
-        author        = %(author)s,
-        status        = %(status)s,
-        visibility    = %(visibility)s,
-        favorite      = %(favorite)s,
-        description   = %(description)s,
-        tags          = %(tags)s,
-        created_at    = %(created_at)s,
-        updated_at    = %(updated_at)s,
-        thumbnail_path= %(thumbnail_path)s,
-        use_count     = %(use_count)s
+        name            = %(name)s,
+        draft_type      = %(draft_type)s,
+        path            = %(path)s,
+        author          = %(author)s,
+        status          = %(status)s,
+        visibility      = %(visibility)s,
+        favorite        = %(favorite)s,
+        description     = %(description)s,
+        tags            = %(tags)s,
+        created_at      = %(created_at)s,
+        updated_at      = %(updated_at)s,
+        thumbnail_path  = %(thumbnail_path)s,
+        use_count       = %(use_count)s,
+        frame_range     = %(frame_range)s,
+        sequence_pattern= %(sequence_pattern)s
     WHERE id = %(id)s
 """
 
@@ -77,6 +80,8 @@ def _draft_to_params(draft: Draft) -> dict:
         "updated_at": draft.updated_at,
         "thumbnail_path": draft.thumbnail_path,
         "use_count": draft.use_count,
+        "frame_range": draft.frame_range,
+        "sequence_pattern": draft.sequence_pattern,
     }
 
 
@@ -107,6 +112,8 @@ def _row_to_draft(row: dict) -> Draft:
         updated_at=_fmt_timestamp(row.get("updated_at")),
         thumbnail_path=row.get("thumbnail_path", ""),
         use_count=row.get("use_count", 0),
+        frame_range=row.get("frame_range", ""),
+        sequence_pattern=row.get("sequence_pattern", ""),
     )
 
 

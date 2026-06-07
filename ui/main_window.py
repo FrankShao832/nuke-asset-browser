@@ -10,6 +10,8 @@ from PySide6.QtCore import Qt
 from asset_browser.core.models import MOCK_DRAFTS, Draft
 from asset_browser.core.search import DraftSearch
 from asset_browser.db.json_store import JSONDraftStorage
+from asset_browser.db.pg_store import PGDraftStorage
+from asset_browser.db.schema import ensure_schema
 from asset_browser.utils.logger import get_logger
 from asset_browser.ui.theme import Color, FontSize, Styles, master_stylesheet
 from asset_browser.ui.widgets.search_bar import SearchBar
@@ -30,21 +32,16 @@ class MainWindow(QWidget):
         super().__init__(parent)
 
         # ── Storage layer ───────────────────────────────────────────────
-        try:
-            self._store = JSONDraftStorage()
-            self._drafts = self._store.list_drafts()
+        self._store = self._init_storage()
+        self._drafts = self._store.list_drafts()
 
-            # Seed with mock data on first run (empty store)
-            if not self._drafts:
-                logger.info("Empty store — seeding with %d mock drafts", len(MOCK_DRAFTS))
-                for mock_draft in MOCK_DRAFTS:
-                    self._store.add_draft(mock_draft)
-                self._drafts = self._store.list_drafts()
-                logger.info("Seeded %d drafts", len(self._drafts))
-        except Exception as exc:
-            logger.error("Storage init failed: %s", exc)
-            self._store = JSONDraftStorage()  # last-resort in-memory store
-            self._drafts = []
+        # Seed with mock data on first run (empty store)
+        if not self._drafts:
+            logger.info("Empty store — seeding with %d mock drafts", len(MOCK_DRAFTS))
+            for mock_draft in MOCK_DRAFTS:
+                self._store.add_draft(mock_draft)
+            self._drafts = self._store.list_drafts()
+            logger.info("Seeded %d drafts", len(self._drafts))
 
         self._search_engine = DraftSearch()
         self._search_engine.set_drafts(self._drafts)
@@ -52,8 +49,49 @@ class MainWindow(QWidget):
         self._init_ui()
         self._connect_signals()
         self._load_drafts(self._drafts)
-        # Apply default sort ("latest" first)
         self._refresh()
+
+    # ── Storage initialisation ──────────────────────────────────────────
+
+    def _init_storage(self) -> PGDraftStorage | JSONDraftStorage:
+        """Initialise the storage backend.
+
+        Tries PostgreSQL first (ensures schema), falls back to JSON file
+        storage if PG is unavailable.
+
+        Returns:
+            An initialised store instance.
+        """
+        global _STORAGE_BACKEND  # noqa: PLW0603
+
+        # Try PostgreSQL
+        if ensure_schema():
+            try:
+                store = PGDraftStorage()
+                drafts = store.list_drafts()
+                logger.info("PG store ready — %d drafts found", len(drafts))
+                _STORAGE_BACKEND = "PostgreSQL"
+                return store
+            except Exception as exc:
+                logger.warning("PG store init failed: %s", exc)
+        else:
+            logger.info("PG unavailable — falling back to JSON storage")
+
+        # Fallback: JSON file storage
+        try:
+            store = JSONDraftStorage()
+            drafts = store.list_drafts()
+            logger.info("JSON store ready — %d drafts found", len(drafts))
+            _STORAGE_BACKEND = "JSON"
+            return store
+        except Exception as exc:
+            logger.error("JSON store also failed: %s", exc)
+            _STORAGE_BACKEND = "Memory"
+            store = JSONDraftStorage()
+            logger.warning("Using in-memory fallback store")
+            return store
+
+    # ── UI setup ────────────────────────────────────────────────────────
 
     def _init_ui(self):
         self.setWindowTitle("Nuke Asset Browser")
@@ -65,14 +103,12 @@ class MainWindow(QWidget):
 
         # ── Top bar ──
         top_bar = QWidget()
-        # top_bar.setFixedHeight(48)
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(8, 8, 8, 8)
         top_layout.setSpacing(0)
 
         self._user_badge = UserBadge("Frank", "Admin")
         top_layout.addWidget(self._user_badge)
-
         top_layout.addStretch()
 
         self._settings_btn = QPushButton("⚙️")
@@ -114,7 +150,6 @@ class MainWindow(QWidget):
 
         self._storage_label = QLabel("🟢  PostgreSQL")
         status_layout.addWidget(self._storage_label)
-
         status_layout.addStretch()
 
         self._count_label = QLabel()
@@ -122,9 +157,8 @@ class MainWindow(QWidget):
 
         root.addWidget(self._status_bar)
 
-        # ── Fixed window size for 6 cards per row ──
-        # Grid internal: 6*200 + 5*8(spacing) + 16(margins) = 1256
-        # Body: 8(left) + 1256(grid) + 6(spacing) + 260(sidebar) + 8(right) = 1538
+        # Grid: 6*200 + 5*8(spacing) + 16(margins) = 1256
+        # Body: 8+1256+6+260+8 = 1538
         self.setFixedSize(1538, 800)
 
     def _connect_signals(self):
@@ -156,10 +190,12 @@ class MainWindow(QWidget):
         flt = self._search_engine._filter
         srt = self._search_engine._sort
 
-        parts = ["💾 JSON"]
+        backend_icon = "🟢" if _STORAGE_BACKEND == "PostgreSQL" else "🟡" if _STORAGE_BACKEND == "JSON" else "🔴"
+        self._storage_label.setText(f"{backend_icon}  {_STORAGE_BACKEND}")
+
+        parts = [f"📂 {flt}"]
         if kw:
             parts.append(f'🔎 "{kw}"')
-        parts.append(f"📂 {flt}")
         parts.append(f"📊 {srt}")
         self._status_label.setText(" · ".join(parts))
         self._count_label.setText(f"Showing {current} of {total} drafts")

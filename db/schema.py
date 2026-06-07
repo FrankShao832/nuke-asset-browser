@@ -29,20 +29,22 @@ _CREATE_SCHEMA = """
 
 _CREATE_TABLE = """
     CREATE TABLE IF NOT EXISTS browser.drafts (
-        id              SERIAL PRIMARY KEY,
-        name            TEXT NOT NULL,
-        draft_type      TEXT NOT NULL DEFAULT 'other',
-        path            TEXT NOT NULL DEFAULT '',
-        author          TEXT NOT NULL DEFAULT 'artist',
-        status          TEXT NOT NULL DEFAULT 'draft',
-        visibility      TEXT NOT NULL DEFAULT 'private',
-        favorite        BOOLEAN NOT NULL DEFAULT FALSE,
-        description     TEXT NOT NULL DEFAULT '',
-        tags            TEXT[] NOT NULL DEFAULT '{}',
-        created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-        updated_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-        thumbnail_path  TEXT NOT NULL DEFAULT '',
-        use_count       INTEGER NOT NULL DEFAULT 0
+        id                SERIAL PRIMARY KEY,
+        name              TEXT NOT NULL,
+        draft_type        TEXT NOT NULL DEFAULT 'other',
+        path              TEXT NOT NULL DEFAULT '',
+        author            TEXT NOT NULL DEFAULT 'artist',
+        status            TEXT NOT NULL DEFAULT 'draft',
+        visibility        TEXT NOT NULL DEFAULT 'private',
+        favorite          BOOLEAN NOT NULL DEFAULT FALSE,
+        description       TEXT NOT NULL DEFAULT '',
+        tags              TEXT[] NOT NULL DEFAULT '{}',
+        created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        updated_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+        thumbnail_path    TEXT NOT NULL DEFAULT '',
+        use_count         INTEGER NOT NULL DEFAULT 0,
+        frame_range       TEXT NOT NULL DEFAULT '',
+        sequence_pattern  TEXT NOT NULL DEFAULT ''
     );
 """
 
@@ -79,6 +81,19 @@ _CREATE_INDEXES = [
     """,
 ]
 
+# ── Migration (v1 → v2: add sequence fields) ───────────────────────────
+
+_MIGRATE_V1_V2 = [
+    """
+    ALTER TABLE browser.drafts
+        ADD COLUMN IF NOT EXISTS frame_range TEXT NOT NULL DEFAULT '';
+    """,
+    """
+    ALTER TABLE browser.drafts
+        ADD COLUMN IF NOT EXISTS sequence_pattern TEXT NOT NULL DEFAULT '';
+    """,
+]
+
 
 # ── Public API ──────────────────────────────────────────────────────────
 
@@ -110,6 +125,10 @@ def ensure_schema() -> bool:
 
     # Indexes
     for sql in _CREATE_INDEXES:
+        pg_pool.execute(sql)
+
+    # Migration: ensure all columns exist
+    for sql in _MIGRATE_V1_V2:
         pg_pool.execute(sql)
 
     logger.info("browser.drafts schema ready")

@@ -453,8 +453,14 @@ def _read_dpx_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
 
         raw = np.frombuffer(proc.stdout, dtype=np.uint8).reshape(nh, nw, 3)
 
-        # Display as-is — ffmpeg already handles DPX→sRGB conversion
-        img = QImage(raw.data, nw, nh, nw * 3, QImage.Format_RGB888)
+        # Apply gamma 2.2 (same as EXR) — DPX is typically linear or log;
+        # gamma gives a reasonable default display transform
+        rgb_f = raw.astype(np.float32) / 255.0
+        rgb_f = np.power(rgb_f, 1.0 / 2.2)
+        np.clip(rgb_f, 0.0, 1.0, out=rgb_f)
+        rgb_8 = (rgb_f * 255.0).astype(np.uint8)
+
+        img = QImage(rgb_8.data, nw, nh, nw * 3, QImage.Format_RGB888)
         return QPixmap.fromImage(img)
 
     except FileNotFoundError:
