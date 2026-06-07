@@ -78,14 +78,23 @@ class Toast(QWidget):
         if not parent:
             return
 
-        # Size to content, then position at bottom-center of parent
+        # Size to content, then position over the status bar if possible
         self.adjustSize()
-        pw = parent.width()
-        ph = parent.height()
         tw = self.width()
         th = self.height()
-        x = max(0, (pw - tw) // 2)
-        y = ph - th - 40
+        pw = parent.width()
+
+        # If parent has a _status_bar child, float centered over it
+        status_bar = getattr(parent, '_status_bar', None)
+        if status_bar and status_bar.isVisible():
+            sb = status_bar.geometry()
+            x = max(0, (pw - tw) // 2)
+            y = sb.y() + (sb.height() - th) // 2
+        else:
+            # Fallback: float above bottom edge
+            x = max(0, (pw - tw) // 2)
+            y = parent.height() - th - 40
+
         self.move(x, y)
 
         # Raise above all siblings + show as widget

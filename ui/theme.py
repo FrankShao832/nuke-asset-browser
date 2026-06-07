@@ -271,14 +271,6 @@ class Styles:
         color = color or Color.TEXT_SMALL
         return f"font-size: {FontSize.SMALL}; color: {color}; background: transparent;"
 
-    @classmethod
-    def status_bar(cls) -> str:
-        """Bottom status bar."""
-        return f"""
-            background-color: {Color.PANEL};
-            border-top: 1px solid {Color.BORDER};
-            font-size: {FontSize.SMALL};
-        """
 
 # ── Master stylesheet for QApplication ──
 
