@@ -14,7 +14,7 @@ from PySide6.QtGui import QDrag, QPixmap, QColor
 from asset_browser.core.models import Draft
 from asset_browser.core.sequence import detect_sequences, detect_from_file
 from asset_browser.core.thumbnail import (
-    get_thumbnail, invalidate_cache, _load_pixmap_safe, cache_sequence_frames,
+    get_thumbnail, invalidate_cache, _load_pixmap_safe,
     _CARD_W, _CARD_H,
 )
 from asset_browser.ui.theme import Color, FontSize, Styles

@@ -313,22 +313,15 @@ def _load_exr_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
             b = _downsample(b, nw, nh)
             pw, ph = nw, nh
 
-        # Tone-map: Reinhard log-average → gamma 2.2 → 8-bit
+        # Tone-map: gamma 2.2 only (matches Nuke's Viewer for linear EXR)
         def tonemap(rgb: np.ndarray) -> np.ndarray:
-            """Reinhard global tonemap with log-average key + gamma 2.2."""
-            # Clamp negatives — EXR can have sub-zero values from the renderer
+            """Linear → clamp negatives → gamma 2.2 → 8-bit.
+
+            This matches Nuke's Viewer behavior for linear Rec.709/sRGB EXR:
+            no auto-exposure, just the standard display gamma.
+            """
             rgb = np.maximum(rgb, 0.0)
-            # Luminance (Rec.709 weights)
-            lum = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
-            # Log-average luminance (Reinhard 'key' value)
-            log_lum = np.log(np.maximum(lum, 1e-6))
-            avg_log = np.exp(np.mean(log_lum))
-            exposure = 1.0 / max(avg_log, 1e-6)
-            # Scale by exposure, then Reinhard global operator
-            arr = rgb * exposure
-            arr = arr / (1.0 + arr)  # L/(1+L) maps [0,∞) → [0,1)
-            # Gamma correction
-            arr = np.power(arr, 1.0 / 2.2)
+            arr = np.power(rgb, 1.0 / 2.2)
             np.clip(arr, 0.0, 1.0, out=arr)
             return (arr * 255.0).astype(np.uint8)
 
