@@ -218,6 +218,7 @@ class MainWindow(QWidget):
 
             draft = self._store.add_draft(draft)
             self._load_drafts(self._store.list_drafts())
+            self._refresh()  # apply current sort
             Toast.appear(self, f"📦 Saved: {draft.name}", Toast.SUCCESS)
 
         dialog.saved.connect(_on_saved)
@@ -229,6 +230,12 @@ class MainWindow(QWidget):
         import os
         from asset_browser.core.sequence import detect_sequences, detect_from_file
 
+        def _on_saved(draft: Draft) -> None:
+            draft = self._store.add_draft(draft)
+            self._load_drafts(self._store.list_drafts())
+            self._refresh()
+            Toast.appear(self, f"📥 Imported: {draft.name}", Toast.SUCCESS)
+
         # Step 1: Try folder first, then fall back to individual file
         folder = QFileDialog.getExistingDirectory(
             self, "Select folder containing image sequence"
@@ -236,7 +243,17 @@ class MainWindow(QWidget):
         if folder:
             seqs = detect_sequences(folder)
             if seqs:
-                self._open_save_for_sequence(seqs[0])
+                dialog = SaveDraftDialog({
+                    "name": seqs[0].name,
+                    "draft_type": "sequence",
+                    "path": seqs[0].folder,
+                    "description": f"Sequence: {seqs[0].pattern} [{seqs[0].frame_range_str}]",
+                    "tags": [seqs[0].ext.lstrip(".")],
+                    "frame_range": seqs[0].frame_range_str,
+                    "sequence_pattern": seqs[0].pattern,
+                }, self)
+                dialog.saved.connect(_on_saved)
+                dialog.open()
                 return
 
         # Step 2: Pick a single sequence frame file
@@ -250,28 +267,23 @@ class MainWindow(QWidget):
         for fp in file_paths:
             seq = detect_from_file(fp)
             if seq:
-                self._open_save_for_sequence(seq)
+                dialog = SaveDraftDialog({
+                    "name": seq.name,
+                    "draft_type": "sequence",
+                    "path": seq.folder,
+                    "description": f"Sequence: {seq.pattern} [{seq.frame_range_str}]",
+                    "tags": [seq.ext.lstrip(".")],
+                    "frame_range": seq.frame_range_str,
+                    "sequence_pattern": seq.pattern,
+                }, self)
+                dialog.saved.connect(_on_saved)
+                dialog.open()
             else:
                 # No sequence detected — treat as a single-file draft
                 name = os.path.splitext(os.path.basename(fp))[0]
                 dialog = SaveDraftDialog({"name": name, "path": fp}, self)
-                if dialog.exec() == SaveDraftDialog.Accepted:
-                    pass
-
-    def _open_save_for_sequence(self, seq):
-        """Open save dialog pre-filled with sequence info."""
-        import time
-        dialog = SaveDraftDialog({
-            "name": seq.name,
-            "draft_type": "sequence",
-            "path": seq.folder,
-            "description": f"Sequence: {seq.pattern} [{seq.frame_range_str}]",
-            "tags": [seq.ext.lstrip(".")],
-            "frame_range": seq.frame_range_str,
-            "sequence_pattern": seq.pattern,
-        }, self)
-        if dialog.exec() == SaveDraftDialog.Accepted:
-            pass
+                dialog.saved.connect(_on_saved)
+                dialog.open()
 
     def _on_draft_activated(self, draft_id: int):
         draft = self._search_engine.get_draft(draft_id)
@@ -293,12 +305,14 @@ class MainWindow(QWidget):
             return
         self._store.delete_draft(draft_id)
         self._load_drafts(self._store.list_drafts())
+        self._refresh()
         Toast.appear(self, f"🗑️ Deleted: {draft.name}", Toast.SUCCESS)
 
     def _on_draft_dropped(self, draft: Draft):
         """Handle a draft created from a folder/file drag-drop."""
         added = self._store.add_draft(draft)
         self._load_drafts(self._store.list_drafts())
+        self._refresh()
         Toast.appear(self, f"📥 Imported: {draft.name}", Toast.SUCCESS)
 
     def _on_favorite_toggled(self, draft_id: int, new_state: bool):

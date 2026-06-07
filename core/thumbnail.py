@@ -243,17 +243,23 @@ def cache_sequence_frames(
 # ── Internal helpers ────────────────────────────────────────────────────
 
 def _load_pixmap_safe(path: str) -> QPixmap:
-    """Load a pixmap, falling back to OpenEXR if ``QPixmap`` can't handle it."""
+    """Load a pixmap, falling back to OpenEXR/DPX readers if needed."""
     pix = QPixmap(path)
     if not pix.isNull():
         return pix
 
-    # QPixmap failed — try OpenEXR for .exr files
+    # QPixmap failed — try format-specific readers
     ext = os.path.splitext(path)[1].lower()
+
     if ext == ".exr":
         exr_pix = _load_exr_thumbnail(path)
         if exr_pix and not exr_pix.isNull():
             return exr_pix
+
+    if ext in (".dpx",):
+        dpx_pix = _read_dpx_thumbnail(path)
+        if dpx_pix and not dpx_pix.isNull():
+            return dpx_pix
 
     logger.debug("Could not load image: %s", path)
     return pix  # null pixmap
@@ -404,3 +410,59 @@ def _sequence_first_frame(draft: Draft) -> Optional[str]:
     if seqs:
         return seqs[0].first_path()
     return None
+
+
+# ── DPX reader ─────────────────────────────────────────────────────────
+
+
+def _read_dpx_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
+    """Read a DPX file and return a thumbnail as QPixmap via ffmpeg."""
+    import subprocess
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        if probe.returncode != 0:
+            logger.debug("ffprobe failed for %s", path)
+            return None
+        parts = probe.stdout.strip().split(",")
+        if len(parts) != 2:
+            return None
+        pw, ph = int(parts[0]), int(parts[1])
+        if pw < 1 or ph < 1 or pw > 16384 or ph > 16384:
+            return None
+
+        scale = min(max_dim / pw, max_dim / ph, 1.0)
+        nw = max(1, int(pw * scale))
+        nh = max(1, int(ph * scale))
+
+        proc = subprocess.run(
+            ["ffmpeg", "-v", "quiet", "-i", path,
+             "-frames:v", "1", "-f", "rawvideo",
+             "-pix_fmt", "rgb24", "-s", f"{nw}x{nh}", "-"],
+            capture_output=True, timeout=30,
+        )
+        if proc.returncode != 0:
+            return None
+
+        raw = np.frombuffer(proc.stdout, dtype=np.uint8).reshape(nh, nw, 3)
+        rgb_f = raw.astype(np.float32) / 255.0
+        rgb_f = np.power(rgb_f, 1.0 / 2.2)
+        np.clip(rgb_f, 0.0, 1.0, out=rgb_f)
+        rgb_8 = (rgb_f * 255.0).astype(np.uint8)
+
+        img = QImage(rgb_8.data, nw, nh, nw * 3, QImage.Format_RGB888)
+        return QPixmap.fromImage(img)
+
+    except FileNotFoundError:
+        logger.warning("ffmpeg not found — cannot decode DPX: %s", path)
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning("ffmpeg timeout for DPX: %s", path)
+        return None
+    except Exception as exc:
+        logger.warning("Failed to read DPX thumbnail %s: %s", path, exc)
+        return None
