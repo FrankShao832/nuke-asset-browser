@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from asset_browser.core.models import MOCK_DRAFTS, Draft
 from asset_browser.core.search import DraftSearch
@@ -16,7 +16,6 @@ from asset_browser.ui.widgets.search_bar import SearchBar
 from asset_browser.ui.widgets.sidebar_filter import SidebarFilter
 from asset_browser.ui.widgets.user_badge import UserBadge
 from asset_browser.ui.widgets.thumbnail_grid import ThumbnailGrid
-from asset_browser.ui.widgets.toast import Toast
 from asset_browser.ui.dialogs.save_dialog import SaveDraftDialog
 from asset_browser.ui.dialogs.settings_dialog import SettingsDialog
 
@@ -48,6 +47,10 @@ class MainWindow(QWidget):
 
         self._search_engine = DraftSearch()
         self._search_engine.set_drafts(self._drafts)
+
+        # Toast timer — auto-clears status-bar toast after delay
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
 
         self._init_ui()
         self._connect_signals()
@@ -104,10 +107,19 @@ class MainWindow(QWidget):
 
         # ── Status bar ──
         self._status_bar = QWidget()
+        self._status_bar.setStyleSheet(Styles.status_bar())
         status_layout = QHBoxLayout(self._status_bar)
+        status_layout.setContentsMargins(8, 4, 8, 4)
 
         self._status_label = QLabel()
         status_layout.addWidget(self._status_label)
+
+        # Toast area — centered, sits inside status bar
+        status_layout.addStretch()
+        self._toast_label = QLabel()
+        self._toast_label.setAlignment(Qt.AlignCenter)
+        status_layout.addWidget(self._toast_label)
+        status_layout.addStretch()
 
         self._storage_label = QLabel("🟢  PostgreSQL")
         status_layout.addWidget(self._storage_label)
@@ -164,6 +176,29 @@ class MainWindow(QWidget):
         counts = self._search_engine.get_counts()
         self._sidebar.update_counts(counts)
 
+    # ── Status-bar toast ────────────────────────────────────────────────
+    _TOAST_COLORS = {
+        "success": "#4caf50",
+        "error": "#ef5350",
+        "info": "#64b5f6",
+    }
+
+    def _show_toast(self, message: str, toast_type: str = "info"):
+        """Show a transient message in the status bar (auto-clears after 2s)."""
+        color = self._TOAST_COLORS.get(toast_type, self._TOAST_COLORS["info"])
+        self._toast_label.setText(message)
+        self._toast_label.setStyleSheet(
+            f"color: {color}; font-size: 13px; font-weight: 600; "
+            f"background: transparent;"
+        )
+        self._toast_timer.stop()
+        self._toast_timer.timeout.connect(self._clear_toast, Qt.UniqueConnection)
+        self._toast_timer.start(2000)
+
+    def _clear_toast(self):
+        self._toast_label.clear()
+        self._toast_label.setStyleSheet("background: transparent;")
+
     def _on_search(self, keyword: str):
         self._search_engine.set_keyword(keyword)
         self._refresh()
@@ -214,7 +249,7 @@ class MainWindow(QWidget):
 
             draft = self._store.add_draft(draft)
             self._load_drafts(self._store.list_drafts())
-            Toast.appear(self, f"📦 Saved: {draft.name}", Toast.SUCCESS)
+            self._show_toast(f"📦 Saved: {draft.name}", "success")
 
         dialog.saved.connect(_on_saved)
         dialog.open()
@@ -237,7 +272,7 @@ class MainWindow(QWidget):
     def _on_draft_activated(self, draft_id: int):
         draft = self._search_engine.get_draft(draft_id)
         if draft:
-            Toast.appear(self, f"📥 Activated: {draft.name}", Toast.INFO)
+            self._show_toast(f"📥 Activated: {draft.name}", "info")
 
     def _on_delete_draft(self, draft_id: int):
         from PySide6.QtWidgets import QMessageBox
@@ -254,7 +289,7 @@ class MainWindow(QWidget):
             return
         self._store.delete_draft(draft_id)
         self._load_drafts(self._store.list_drafts())
-        Toast.appear(self, f"🗑️ Deleted: {draft.name}", Toast.SUCCESS)
+        self._show_toast(f"🗑️ Deleted: {draft.name}", "success")
 
     def _on_favorite_toggled(self, draft_id: int, new_state: bool):
         draft = self._store.get_draft(draft_id)
@@ -263,7 +298,7 @@ class MainWindow(QWidget):
             self._store.update_draft(draft)
             self._update_counts()
             toast_msg = "Favorited" if new_state else "Unfavorited"
-            Toast.appear(self, f"{toast_msg}: {draft.name}", Toast.SUCCESS)
+            self._show_toast(f"{toast_msg}: {draft.name}", "success")
 
     def _open_settings(self):
         dialog = SettingsDialog(self)
