@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import os
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QMenu, QFrame, QLayout, QLayoutItem, QApplication,
 )
 from PySide6.QtCore import Signal, Qt, QSize, QRect, QPoint, QMimeData, QUrl, QTimer
-from PySide6.QtGui import QDrag, QPixmap
+from PySide6.QtGui import QDrag, QPixmap, QColor
 
 from asset_browser.core.models import Draft
+from asset_browser.core.sequence import detect_sequences, detect_from_file
 from asset_browser.core.thumbnail import get_thumbnail, invalidate_cache, _CARD_W, _CARD_H
 from asset_browser.ui.theme import Color, FontSize, Styles
 from asset_browser.ui.widgets.draft_badge import DraftBadge, FavoriteStar
@@ -133,6 +136,14 @@ class ThumbnailCard(QFrame):
         self._thumbnail = thumbnail
         self._thumb_cache_dir = thumb_cache_dir
         self._drag_start_pos: QPoint | None = None
+
+        # ── Hover playback for sequences ──
+        self._playback_frames: list[str] = []
+        self._playback_index = 0
+        self._playback_timer = QTimer(self)
+        self._playback_timer.setInterval(42)  # ~24 fps
+        self._playback_timer.timeout.connect(self._playback_tick)
+        self._init_playback_frames()
         self.setFixedSize(200, 160)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(Styles.card())
@@ -296,6 +307,56 @@ class ThumbnailCard(QFrame):
         self._update_thumb()
         return True
 
+    # ── Hover playback (sequence drafts) ────────────────────────────────
+
+    def _init_playback_frames(self):
+        """Pre-compute the list of frame paths for sequence drafts."""
+        if not self._draft.sequence_pattern or not self._draft.frame_range:
+            return
+        folder = self._draft.path
+        pattern = self._draft.sequence_pattern
+        fr = self._draft.frame_range
+        if not folder or not os.path.isdir(folder) or "-" not in fr:
+            return
+        try:
+            start, end = int(fr.split("-")[0]), int(fr.split("-")[1])
+        except (ValueError, IndexError):
+            return
+        self._playback_frames = [
+            os.path.join(folder, pattern % f)
+            for f in range(start, end + 1)
+            if os.path.isfile(os.path.join(folder, pattern % f))
+        ]
+
+    def _playback_tick(self):
+        """Advance to the next frame."""
+        if not self._playback_frames:
+            self._playback_timer.stop()
+            return
+        self._playback_index = (self._playback_index + 1) % len(self._playback_frames)
+        path = self._playback_frames[self._playback_index]
+        pix = QPixmap(path)
+        if not pix.isNull():
+            self._thumb_label.setPixmap(
+                pix.scaled(188, 108, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            )
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        if self._playback_frames:
+            self._playback_index = 0
+            self._playback_timer.start()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        if self._playback_timer.isActive():
+            self._playback_timer.stop()
+            # Restore static thumbnail
+            self._thumbnail = None
+            self._thumb_label.setText("")
+            self._thumb_label.setStyleSheet("")
+            self._update_thumb()
+
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
         if event.button() == Qt.LeftButton:
@@ -320,7 +381,15 @@ class ThumbnailCard(QFrame):
             from pathlib import Path
             as_posix = Path(file_path).as_posix()
             mime.setUrls([QUrl.fromLocalFile(as_posix)])
-            mime.setText(as_posix)
+
+            if self._draft.sequence_pattern:
+                # Sequence: produce Nuke-friendly "path pattern frame-range"
+                nuke_path = os.path.join(
+                    as_posix, self._draft.sequence_pattern
+                )
+                mime.setText(f"{nuke_path} {self._draft.frame_range}")
+            else:
+                mime.setText(as_posix)
 
         drag.setMimeData(mime)
 
@@ -350,6 +419,7 @@ class ThumbnailGrid(QScrollArea):
     draft_activated = Signal(int)
     favorite_toggled = Signal(int, bool)
     delete_requested = Signal(int)
+    draft_dropped = Signal(object)  # Draft — created from drag-drop
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -357,6 +427,7 @@ class ThumbnailGrid(QScrollArea):
         self._drafts: list[Draft] = []
         self._thumb_cache_dir = config.thumbnail_cache_dir
         self._layout = FlowLayout(spacing=8, margin=8)
+        self._next_draft_id = -1  # negative IDs for dropped drafts
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -365,6 +436,7 @@ class ThumbnailGrid(QScrollArea):
         self.viewport().setStyleSheet(
             f"background: {Color.PANEL}; border-radius: 6px;"
         )
+        self.viewport().setAcceptDrops(True)
 
         content = QWidget()
         content.setAttribute(Qt.WA_StyledBackground, False)
@@ -403,6 +475,65 @@ class ThumbnailGrid(QScrollArea):
         self._layout.invalidate()
         self.widget().updateGeometry()
         QTimer.singleShot(100, self._lazy_load_visible)
+
+    # ── Drag & Drop (folder / sequence file) ────────────────────────────
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+
+        for url in urls:
+            if not url.isLocalFile():
+                continue
+            path = url.toLocalFile()
+            draft = self._draft_from_drop(path)
+            if draft:
+                self.draft_dropped.emit(draft)
+
+        event.acceptProposedAction()
+
+    def _draft_from_drop(self, path: str) -> Draft | None:
+        """Create a Draft from a dropped folder or sequence frame file."""
+        import time
+
+        if os.path.isdir(path):
+            seqs = detect_sequences(path)
+            if not seqs:
+                return None
+            seq = seqs[0]
+        elif os.path.isfile(path):
+            seq = detect_from_file(path)
+            if not seq:
+                return None
+        else:
+            return None
+
+        draft_id = self._next_draft_id
+        self._next_draft_id -= 1
+        draft = Draft(
+            id=draft_id,
+            name=seq.name,
+            draft_type="sequence",
+            path=seq.folder,
+            author="frank",
+            status="draft",
+            description=f"Sequence: {seq.pattern} [{seq.frame_range_str}]",
+            tags=[seq.ext.lstrip(".")],
+            created_at=time.strftime("%Y-%m-%d"),
+            updated_at=time.strftime("%Y-%m-%d"),
+            frame_range=seq.frame_range_str,
+            sequence_pattern=seq.pattern,
+        )
+        return draft
 
     def set_drafts(self, drafts: list[Draft]):
         self._drafts = drafts

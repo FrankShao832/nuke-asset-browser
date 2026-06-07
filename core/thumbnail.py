@@ -101,6 +101,17 @@ def get_thumbnail(
             logger.debug("Loaded cached thumbnail for draft %d", draft.id)
             return pix.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
 
+    # 2b. Sequence draft — load the first frame
+    if draft.sequence_pattern:
+        first_frame_path = _sequence_first_frame(draft)
+        if first_frame_path and _is_image_file(first_frame_path):
+            pix = QPixmap(first_frame_path)
+            if not pix.isNull():
+                logger.debug("Loaded sequence first-frame thumbnail for draft %d", draft.id)
+                # Cache it for next time
+                _cache_pixmap(draft.id, pix, thumb_cache_dir)
+                return pix.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+
     # 3. Direct image file
     if _is_image_file(draft.path):
         pix = QPixmap(draft.path)
@@ -198,3 +209,30 @@ def _cache_pixmap(
     except Exception as exc:
         logger.warning("Error caching thumbnail for draft %d: %s", draft_id, exc)
         return None
+
+
+def _sequence_first_frame(draft: Draft) -> Optional[str]:
+    """Return the path to the first frame of a sequence draft."""
+    folder = draft.path
+    if not folder or not os.path.isdir(folder):
+        return None
+
+    # Reconstruct first frame from pattern & frame_range
+    pattern = draft.sequence_pattern
+    fr = draft.frame_range
+    if pattern and fr and "-" in fr:
+        try:
+            start = int(fr.split("-")[0])
+            fname = pattern % start
+        except (ValueError, TypeError):
+            return None
+        path = os.path.join(folder, fname)
+        if os.path.isfile(path):
+            return path
+
+    # Fallback: scan folder for any sequence
+    from asset_browser.core.sequence import detect_sequences
+    seqs = detect_sequences(folder)
+    if seqs:
+        return seqs[0].first_path()
+    return None

@@ -105,7 +105,7 @@ class MainWindow(QWidget):
         # ── Status bar ──
         self._status_bar = QWidget()
         status_layout = QHBoxLayout(self._status_bar)
-        status_layout.setContentsMargins(8, 4, 8, 4)
+        status_layout.setContentsMargins(8, 6, 8, 6)
 
         self._status_label = QLabel()
         status_layout.addWidget(self._status_label)
@@ -133,6 +133,7 @@ class MainWindow(QWidget):
         self._grid.draft_activated.connect(self._on_draft_activated)
         self._grid.delete_requested.connect(self._on_delete_draft)
         self._grid.favorite_toggled.connect(self._on_favorite_toggled)
+        self._grid.draft_dropped.connect(self._on_draft_dropped)
 
     def _load_drafts(self, drafts: list[Draft]):
         self._drafts = drafts
@@ -223,17 +224,52 @@ class MainWindow(QWidget):
     # ── Internal slots ─────────────────────────────────────────────────
 
     def _on_upload(self):
+        import os
+        from asset_browser.core.sequence import detect_sequences, detect_from_file
+
+        # Step 1: Try folder first, then fall back to individual file
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select folder containing image sequence"
+        )
+        if folder:
+            seqs = detect_sequences(folder)
+            if seqs:
+                self._open_save_for_sequence(seqs[0])
+                return
+
+        # Step 2: Pick a single sequence frame file
         file_paths, _ = QFileDialog.getOpenFileNames(
-            self, "Select files to upload as Draft", "", "All Files (*)"
+            self, "Select a sequence frame or files", "",
+            "Image Files (*.exr *.png *.jpg *.jpeg *.tif *.tiff *.tga *.dpx *.bmp);;All Files (*)"
         )
         if not file_paths:
             return
+
         for fp in file_paths:
-            import os
-            name = os.path.splitext(os.path.basename(fp))[0]
-            dialog = SaveDraftDialog({"name": name}, self)
-            if dialog.exec() == SaveDraftDialog.Accepted:
-                pass
+            seq = detect_from_file(fp)
+            if seq:
+                self._open_save_for_sequence(seq)
+            else:
+                # No sequence detected — treat as a single-file draft
+                name = os.path.splitext(os.path.basename(fp))[0]
+                dialog = SaveDraftDialog({"name": name, "path": fp}, self)
+                if dialog.exec() == SaveDraftDialog.Accepted:
+                    pass
+
+    def _open_save_for_sequence(self, seq):
+        """Open save dialog pre-filled with sequence info."""
+        import time
+        dialog = SaveDraftDialog({
+            "name": seq.name,
+            "draft_type": "sequence",
+            "path": seq.folder,
+            "description": f"Sequence: {seq.pattern} [{seq.frame_range_str}]",
+            "tags": [seq.ext.lstrip(".")],
+            "frame_range": seq.frame_range_str,
+            "sequence_pattern": seq.pattern,
+        }, self)
+        if dialog.exec() == SaveDraftDialog.Accepted:
+            pass
 
     def _on_draft_activated(self, draft_id: int):
         draft = self._search_engine.get_draft(draft_id)
@@ -256,6 +292,12 @@ class MainWindow(QWidget):
         self._store.delete_draft(draft_id)
         self._load_drafts(self._store.list_drafts())
         Toast.appear(self, f"🗑️ Deleted: {draft.name}", Toast.SUCCESS)
+
+    def _on_draft_dropped(self, draft: Draft):
+        """Handle a draft created from a folder/file drag-drop."""
+        added = self._store.add_draft(draft)
+        self._load_drafts(self._store.list_drafts())
+        Toast.appear(self, f"📥 Imported: {draft.name}", Toast.SUCCESS)
 
     def _on_favorite_toggled(self, draft_id: int, new_state: bool):
         draft = self._store.get_draft(draft_id)

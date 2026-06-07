@@ -23,6 +23,8 @@ class Draft:
     updated_at: str = "2026-06-05"
     thumbnail_path: str = ""
     use_count: int = 0
+    frame_range: str = ""               # e.g. "1001-1048"
+    sequence_pattern: str = ""          # e.g. "render_%04d.exr"
 
 
 # ── Mock data ──

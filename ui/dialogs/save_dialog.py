@@ -22,6 +22,8 @@ class SaveDraftDialog(QDialog):
         super().__init__(parent)
         self._defaults = defaults or {}
         self._path_override: str | None = None
+        self._default_frame_range: str = ""
+        self._default_sequence_pattern: str = ""
         self._init_ui()
         self._apply_defaults()
 
@@ -92,7 +94,7 @@ class SaveDraftDialog(QDialog):
         # ── Type ──
         root.addWidget(QLabel("Type"))
         self._type_combo = QComboBox()
-        self._type_combo.addItems(["template", "image", "video", "script", "other"])
+        self._type_combo.addItems(["template", "image", "video", "script", "sequence", "other"])
         root.addWidget(self._type_combo)
 
         # ── Description ──
@@ -146,6 +148,15 @@ class SaveDraftDialog(QDialog):
                 self._type_combo.setCurrentIndex(idx)
         if "path" in self._defaults:
             self._path_override = self._defaults["path"]
+        if "tags" in self._defaults:
+            tags = self._defaults["tags"]
+            if isinstance(tags, list):
+                self._tags_input.setText(", ".join(tags))
+        if "description" in self._defaults:
+            self._desc_input.setPlainText(self._defaults["description"])
+        # Sequence fields passed through for Draft creation
+        self._default_frame_range = self._defaults.get("frame_range", "")
+        self._default_sequence_pattern = self._defaults.get("sequence_pattern", "")
 
     def _on_save(self):
         name = self._name_input.text().strip()
@@ -179,6 +190,8 @@ class SaveDraftDialog(QDialog):
             visibility=self._vis_combo.currentText(),
             description=self._desc_input.toPlainText().strip(),
             tags=[t.strip() for t in self._tags_input.text().split(",") if t.strip()],
+            frame_range=self._default_frame_range,
+            sequence_pattern=self._default_sequence_pattern,
         )
         self.saved.emit(draft)
         self.accept()
