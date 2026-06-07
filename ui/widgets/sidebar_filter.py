@@ -1,4 +1,4 @@
-"""Nuke Asset Browser — Sidebar Filter Panel (naked)"""
+"""Nuke Asset Browser — Sidebar Filter Panel"""
 
 from __future__ import annotations
 
@@ -8,13 +8,16 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, Qt
 
+from asset_browser.ui.theme import Color, FontSize, Styles
+
 
 class _FilterButton(QWidget):
     """A single filter item: icon + label + count badge"""
 
     clicked = Signal(str)
 
-    def __init__(self, filter_id: str, icon: str, label: str, count: int = 0, parent=None):
+    def __init__(self, filter_id: str, icon: str, label: str,
+                 count: int = 0, parent=None):
         super().__init__(parent)
         self._filter_id = filter_id
         self._active = False
@@ -28,16 +31,20 @@ class _FilterButton(QWidget):
 
         icon_label = QLabel(icon)
         icon_label.setFixedWidth(20)
-        icon_label.setStyleSheet("background: transparent;")
+        icon_label.setStyleSheet(f"background: {Color.TRANSPARENT};")
         layout.addWidget(icon_label)
 
         self._label = QLabel(label)
-        self._label.setStyleSheet("background: transparent; color: #ccc;")
+        self._label.setStyleSheet(
+            f"background: {Color.TRANSPARENT}; color: {Color.TEXT_SECONDARY};"
+        )
         layout.addWidget(self._label, stretch=1)
 
         self._badge = QLabel(str(count))
         self._badge.setFixedSize(20, 18)
-        self._badge.setStyleSheet("background: transparent; color: #999;")
+        self._badge.setStyleSheet(
+            f"background: {Color.TRANSPARENT}; color: {Color.TEXT_MUTED};"
+        )
         self._badge.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._badge)
 
@@ -45,12 +52,22 @@ class _FilterButton(QWidget):
         self._active = active
         if active:
             self.setStyleSheet("")
-            self._label.setStyleSheet("color: #fff; font-weight: 700; background: transparent;")
-            self._badge.setStyleSheet("color: #fff; font-weight: 700; background: transparent;")
+            self._label.setStyleSheet(
+                f"color: {Color.TEXT_TITLE}; font-weight: 700; "
+                f"background: {Color.TRANSPARENT};"
+            )
+            self._badge.setStyleSheet(
+                f"color: {Color.TEXT_TITLE}; font-weight: 700; "
+                f"background: {Color.TRANSPARENT};"
+            )
         else:
             self.setStyleSheet("")
-            self._label.setStyleSheet("color: #ccc; background: transparent;")
-            self._badge.setStyleSheet("color: #999; background: transparent;")
+            self._label.setStyleSheet(
+                f"color: {Color.TEXT_SECONDARY}; background: {Color.TRANSPARENT};"
+            )
+            self._badge.setStyleSheet(
+                f"color: {Color.TEXT_MUTED}; background: {Color.TRANSPARENT};"
+            )
 
     def set_count(self, count: int):
         self._badge.setText(str(count))
@@ -64,6 +81,10 @@ class _SectionLabel(QLabel):
     """Section header label"""
     def __init__(self, text: str, parent=None):
         super().__init__(text, parent)
+        self.setStyleSheet(
+            f"background: {Color.TRANSPARENT}; color: {Color.TEXT_MUTED}; "
+            f"font-size: 10px; font-weight: 700; padding: 8px 8px 2px;"
+        )
 
 
 class SidebarFilter(QWidget):
@@ -72,6 +93,7 @@ class SidebarFilter(QWidget):
     filter_changed = Signal(str)
     sort_changed = Signal(str)
     upload_clicked = Signal()
+    save_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -81,11 +103,11 @@ class SidebarFilter(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        self.setStyleSheet("""
-            SidebarFilter {
-                background-color: #1e1e1e;
+        self.setStyleSheet(f"""
+            SidebarFilter {{
+                background-color: {Color.PANEL};
                 border-radius: 6px;
-            }
+            }}
         """)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -95,10 +117,11 @@ class SidebarFilter(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setStyleSheet("""
-            QScrollArea { border-radius: 6px; background: #1e1e1e; }
-        """)
-        scroll.viewport().setStyleSheet("background: #1e1e1e; border-radius: 6px;")
+        scroll.setStyleSheet(Styles.scroll_area())
+        scroll.viewport().setStyleSheet(
+            f"background: {Color.PANEL}; border-radius: 6px;"
+        )
+        scroll.verticalScrollBar().setStyleSheet(Styles.scroll_bar())
 
         content = QWidget()
         self._content_layout = QVBoxLayout(content)
@@ -142,22 +165,7 @@ class SidebarFilter(QWidget):
         self._upload_btn = QPushButton("📤  Upload")
         self._upload_btn.setFixedHeight(36)
         self._upload_btn.setCursor(Qt.PointingHandCursor)
-        self._upload_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3a7bd5;
-                border: none;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: 600;
-                color: #fff;
-            }
-            QPushButton:hover {
-                background-color: #4a8be5;
-            }
-            QPushButton:pressed {
-                background-color: #2a6bc5;
-            }
-        """)
+        self._upload_btn.setStyleSheet(Styles.primary_button())
         self._upload_btn.clicked.connect(self.upload_clicked.emit)
         upload_layout.addWidget(self._upload_btn)
 
@@ -193,31 +201,35 @@ class SidebarFilter(QWidget):
         self.sort_changed.emit(sort_key)
 
     def _update_sort_style(self):
-        active_style = """
-            QPushButton {
-                background-color: #3a7bd5;
+        active = f"""
+            QPushButton {{
+                background-color: {Color.ACCENT};
                 border: none;
                 border-radius: 4px;
-                font-size: 13px;
+                font-size: {FontSize.BUTTON};
                 font-weight: 600;
-                color: #fff;
-            }
+                color: {Color.TEXT_TITLE};
+            }}
         """
-        inactive_style = """
-            QPushButton {
-                background-color: #333;
+        inactive = f"""
+            QPushButton {{
+                background-color: {Color.BTN_NORMAL};
                 border: none;
                 border-radius: 4px;
-                font-size: 13px;
-                color: #999;
-            }
-            QPushButton:hover {
-                background-color: #3a3a3a;
-                color: #ccc;
-            }
+                font-size: {FontSize.BUTTON};
+                color: {Color.TEXT_MUTED};
+            }}
+            QPushButton:hover {{
+                background-color: {Color.BTN_HOVER};
+                color: {Color.TEXT_SECONDARY};
+            }}
         """
-        self._btn_latest.setStyleSheet(active_style if self._current_sort == "latest" else inactive_style)
-        self._btn_hottest.setStyleSheet(active_style if self._current_sort == "hottest" else inactive_style)
+        self._btn_latest.setStyleSheet(
+            active if self._current_sort == "latest" else inactive
+        )
+        self._btn_hottest.setStyleSheet(
+            active if self._current_sort == "hottest" else inactive
+        )
 
     def update_counts(self, counts: dict[str, int]):
         for filter_id, count in counts.items():

@@ -1,4 +1,4 @@
-"""Nuke Asset Browser — Thumbnail Grid (naked)"""
+"""Nuke Asset Browser — Thumbnail Grid"""
 
 from __future__ import annotations
 
@@ -6,13 +6,18 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QMenu, QFrame, QLayout, QLayoutItem, QApplication,
 )
-from PySide6.QtCore import Signal, Qt, QSize, QRect, QPoint, QMimeData, QUrl
+from PySide6.QtCore import Signal, Qt, QSize, QRect, QPoint, QMimeData, QUrl, QTimer
 from PySide6.QtGui import QDrag, QPixmap
 
 from asset_browser.core.models import Draft
 from asset_browser.core.thumbnail import get_thumbnail, invalidate_cache, _CARD_W, _CARD_H
+from asset_browser.ui.theme import Color, FontSize, Styles
 from asset_browser.ui.widgets.draft_badge import DraftBadge, FavoriteStar
 from asset_browser.utils.config import config
+
+# ── LRU thumbnail cache (avoids re-reading disk on rebuild/scroll) ─────
+_THUMB_CACHE: dict[int, QPixmap] = {}
+_MAX_CACHE_SIZE = 200
 
 
 class FlowLayout(QLayout):
@@ -130,17 +135,7 @@ class ThumbnailCard(QFrame):
         self._drag_start_pos: QPoint | None = None
         self.setFixedSize(200, 160)
         self.setCursor(Qt.PointingHandCursor)
-        self.setStyleSheet("""
-            ThumbnailCard {
-                background-color: #2b2b2b;
-                border: 1px solid #3a3a3a;
-                border-radius: 6px;
-            }
-            ThumbnailCard:hover {
-                border: 1px solid #3a7bd5;
-                background-color: #2d2d2d;
-            }
-        """)
+        self.setStyleSheet(Styles.card())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -151,7 +146,7 @@ class ThumbnailCard(QFrame):
         thumb_h = 160 - 12 - 40  # 108
         thumb_area = QWidget()
         thumb_area.setFixedHeight(thumb_h)
-        thumb_area.setStyleSheet("background: transparent; border: none;")
+        thumb_area.setStyleSheet(f"background: {Color.TRANSPARENT}; border: none;")
         thumb_layout = QVBoxLayout(thumb_area)
         thumb_layout.setContentsMargins(0, 0, 0, 0)
         thumb_layout.setSpacing(0)
@@ -159,7 +154,12 @@ class ThumbnailCard(QFrame):
         self._thumb_label = QLabel()
         self._thumb_label.setAlignment(Qt.AlignCenter)
         self._thumb_label.setFixedHeight(thumb_h)
-        self._update_thumb()
+        # Show placeholder text immediately; real thumbnail loaded lazily
+        self._thumb_label.setText("⏳")
+        self._thumb_label.setStyleSheet(
+            f"color: {Color.TEXT_MUTED}; font-size: 24px;"
+        )
+        self._thumb_label.setAlignment(Qt.AlignCenter)
         thumb_layout.addWidget(self._thumb_label)
 
         overlay = QWidget(thumb_area)
@@ -184,13 +184,19 @@ class ThumbnailCard(QFrame):
         info_layout.setContentsMargins(8, 4, 8, 4)
         info_layout.setSpacing(1)
 
-        self._name_label = QLabel(draft.name)
+        self._name_label = QLabel()
         self._name_label.setWordWrap(False)
-        self._name_label.setStyleSheet("""
+        # Elide long names with "…"
+        self._name_label.setToolTip(draft.name)
+        fm = self._name_label.fontMetrics()
+        # Available width: 200(card) - 12(layout margins) - 16(info margins) = 172
+        elided = fm.elidedText(draft.name, Qt.ElideRight, 172)
+        self._name_label.setText(elided)
+        self._name_label.setStyleSheet(f"""
             font-size: 11px;
             font-weight: 600;
-            color: #ddd;
-            background: transparent;
+            color: {Color.TEXT_TITLE};
+            background: {Color.TRANSPARENT};
         """)
         info_layout.addWidget(self._name_label)
 
@@ -198,24 +204,24 @@ class ThumbnailCard(QFrame):
         meta.setSpacing(4)
 
         type_label = QLabel(draft.draft_type.upper())
-        type_label.setStyleSheet("""
-            font-size: 9px;
-            color: #888;
-            background: #333;
+        type_label.setStyleSheet(f"""
+            font-size: {FontSize.SMALL};
+            color: {Color.TEXT_MUTED};
+            background: {Color.BTN_NORMAL};
             border-radius: 2px;
             padding: 0 4px;
         """)
         meta.addWidget(type_label)
 
         author_label = QLabel(f"by {draft.author}")
-        author_label.setStyleSheet("font-size: 9px; color: #666; background: transparent;")
+        author_label.setStyleSheet(Styles.label_small(Color.TEXT_SMALL))
         meta.addWidget(author_label)
 
         meta.addStretch()
 
         if draft.use_count > 0:
             use_label = QLabel(f"🔥 {draft.use_count}")
-            use_label.setStyleSheet("font-size: 9px; color: #666; background: transparent;")
+            use_label.setStyleSheet(Styles.label_small(Color.TEXT_SMALL))
             meta.addWidget(use_label)
 
         info_layout.addLayout(meta)
@@ -247,6 +253,48 @@ class ThumbnailCard(QFrame):
 
     def draft_id(self) -> int:
         return self._draft.id
+
+    def load_thumbnail_if_visible(self) -> bool:
+        """Load the real thumbnail if this card is in the viewport.
+
+        Returns True if the thumbnail was loaded (or was already loaded).
+        """
+        # Already loaded with real image?
+        if self._thumbnail is not None or self._thumb_label.text() != "⏳":
+            return True
+
+        # Check visibility within the scroll area viewport
+        scroll = self.parentWidget()
+        while scroll and not isinstance(scroll, QScrollArea):
+            scroll = scroll.parentWidget()
+        if not scroll:
+            return False
+
+        viewport = scroll.viewport()
+        card_rect = QRect(self.mapTo(viewport, QPoint(0, 0)),
+                          self.size())
+        if not viewport.rect().intersects(card_rect):
+            return False  # not visible yet
+
+        # Load from LRU cache or disk
+        did = self._draft.id
+        if did in _THUMB_CACHE:
+            pix = _THUMB_CACHE[did]
+        else:
+            thumb_dir = self._thumb_cache_dir or config.thumbnail_cache_dir
+            pix = get_thumbnail(self._draft, thumb_dir)
+            _THUMB_CACHE[did] = pix
+            # Evict if cache too large
+            if len(_THUMB_CACHE) > _MAX_CACHE_SIZE:
+                oldest = next(iter(_THUMB_CACHE))
+                del _THUMB_CACHE[oldest]
+
+        self._thumbnail = pix
+        # Clear placeholder text
+        self._thumb_label.setText("")
+        self._thumb_label.setStyleSheet("")
+        self._update_thumb()
+        return True
 
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
@@ -313,26 +361,64 @@ class ThumbnailGrid(QScrollArea):
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setStyleSheet("""
-            QScrollArea { border-radius: 6px; background: #1e1e1e; }
-            QScrollArea > QWidget > QWidget { background: #1e1e1e; }
-        """)
-        self.viewport().setStyleSheet("background: #1e1e1e; border-radius: 6px;")
+        self.setStyleSheet(Styles.scroll_area())
+        self.viewport().setStyleSheet(
+            f"background: {Color.PANEL}; border-radius: 6px;"
+        )
 
         content = QWidget()
         content.setAttribute(Qt.WA_StyledBackground, False)
-        content.setStyleSheet("background: transparent;")
+        content.setStyleSheet(f"background: {Color.TRANSPARENT};")
         content.setLayout(self._layout)
         self.setWidget(content)
+
+        # ── Empty state placeholder ──
+        self._empty_label = QLabel(self)
+        self._empty_label.setAlignment(Qt.AlignCenter)
+        self._empty_label.setStyleSheet(
+            f"color: {Color.TEXT_MUTED}; font-size: 15px; background: transparent;"
+        )
+        self._empty_label.hide()
+
+        # ── Lazy load on scroll ──
+        self.verticalScrollBar().valueChanged.connect(self._lazy_load_visible)
+
+    def _lazy_load_visible(self):
+        """Trigger thumbnail loading for cards currently in the viewport."""
+        for card in self._cards.values():
+            card.load_thumbnail_if_visible()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Keep empty label centered
+        vp = self.viewport()
+        if vp and self._empty_label.isVisible():
+            vp_w = vp.width()
+            vp_h = vp.height()
+            self._empty_label.setFixedSize(vp_w, 40)
+            self._empty_label.move(0, (vp_h - 40) // 2)
 
     def showEvent(self, event):
         super().showEvent(event)
         self._layout.invalidate()
         self.widget().updateGeometry()
+        QTimer.singleShot(100, self._lazy_load_visible)
 
     def set_drafts(self, drafts: list[Draft]):
         self._drafts = drafts
         self._rebuild()
+        has_drafts = len(drafts) > 0
+        self._empty_label.setVisible(not has_drafts)
+        if not has_drafts:
+            # Show meaningful message based on context
+            self._empty_label.setText("📭 No drafts found\n\nTry adjusting your search or filters")
+            # Need to trigger resizeEvent to center it
+            vp = self.viewport()
+            if vp:
+                vp_w = vp.width()
+                vp_h = vp.height()
+                self._empty_label.setFixedSize(vp_w, 40)
+                self._empty_label.move(0, (vp_h - 40) // 2)
 
     def add_draft(self, draft: Draft):
         self._drafts.append(draft)
@@ -369,6 +455,9 @@ class ThumbnailGrid(QScrollArea):
         if vp_w > 0:
             content.resize(vp_w, content.height())
             self._layout.setGeometry(QRect(0, 0, vp_w, content.height()))
+
+        # Lazy load thumbnails for visible cards
+        QTimer.singleShot(50, self._lazy_load_visible)
 
     def _add_card(self, draft: Draft):
         card = ThumbnailCard(draft, thumb_cache_dir=self._thumb_cache_dir)

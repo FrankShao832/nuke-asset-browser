@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from asset_browser.ui.theme import Color, FontSize, Styles
+
 
 class SettingsDialog(QDialog):
     """Application settings — Database, Cache, Paths, Thumbnails"""
@@ -20,68 +22,39 @@ class SettingsDialog(QDialog):
     def _init_ui(self):
         self.setWindowTitle("Settings")
         self.setFixedSize(520, 480)
-        self.setStyleSheet("""
-            QDialog {
-                border: 1px solid #3a3a3a;
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {Color.WINDOW};
+                border: 1px solid {Color.BORDER};
                 border-radius: 8px;
-            }
-            QGroupBox {
-                font-size: 15px;
-                font-weight: 600;
-                color: #ddd;
-                border: 1px solid #3a3a3a;
-                border-radius: 6px;
-                margin-top: 12px;
-                padding: 12px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 2px 8px;
-            }
-            QLabel {
-                font-size: 14px;
-                color: #bbb;
-            }
-            QLineEdit, QSpinBox {
-                background-color: #1e1e1e;
-                border: 1px solid #3a3a3a;
+            }}
+            QLabel {{
+                font-size: {FontSize.BODY};
+                color: {Color.TEXT_SECONDARY};
+            }}
+            QLineEdit {{
+                background-color: {Color.PANEL};
+                border: 1px solid {Color.BORDER};
                 border-radius: 4px;
                 padding: 4px 8px;
-                font-size: 14px;
-                color: #ddd;
-            }
-            QLineEdit:focus, QSpinBox:focus {
-                border: 1px solid #3a7bd5;
-            }
-            QPushButton {
-                background-color: #333;
-                border: 1px solid #555;
+                font-size: {FontSize.BODY};
+                color: {Color.TEXT_PRIMARY};
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {Color.ACCENT};
+            }}
+            QPushButton {{
+                background-color: {Color.BTN_NORMAL};
+                border: 1px solid {Color.BTN_HOVER};
                 border-radius: 4px;
                 padding: 6px 16px;
-                font-size: 13px;
-                color: #ccc;
-            }
-            QPushButton:hover {
-                background-color: #3a3a3a;
-                color: #ddd;
-            }
-            QTabWidget::pane {
-                border: 1px solid #3a3a3a;
-                border-radius: 4px;
-            }
-            QTabBar::tab {
-                background: #2b2b2b;
-                border: 1px solid #3a3a3a;
-                padding: 8px 20px;
-                font-size: 15px;
-                color: #888;
-            }
-            QTabBar::tab:selected {
-                background: #333;
-                border-bottom-color: #3a7bd5;
-                color: #ddd;
-            }
+                font-size: {FontSize.BUTTON};
+                color: {Color.TEXT_SECONDARY};
+            }}
+            QPushButton:hover {{
+                background-color: {Color.BTN_HOVER};
+                color: {Color.TEXT_PRIMARY};
+            }}
         """)
 
         root = QVBoxLayout(self)
@@ -90,11 +63,12 @@ class SettingsDialog(QDialog):
 
         # Title
         title = QLabel("⚙️ Settings")
-        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #fff;")
+        title.setStyleSheet(Styles.label_title())
         root.addWidget(title)
 
         # ── Tabs ──
         tabs = QTabWidget()
+        tabs.setStyleSheet(Styles.tab_widget())
 
         # Tab 1: Database
         db_tab = QWidget()
@@ -134,18 +108,18 @@ class SettingsDialog(QDialog):
         db_layout.addRow("Password:", self._db_pass)
 
         test_btn = QPushButton("🔌 Test Connection")
-        test_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #2a5a2a;
+        test_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Color.SUCCESS_BG};
                 border: 1px solid #3a7a3a;
                 border-radius: 4px;
                 padding: 6px 16px;
                 font-size: 11px;
                 color: #4caf50;
-            }
-            QPushButton:hover {
-                background-color: #3a6a3a;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {Color.SUCCESS_BG_HOVER};
+            }}
         """)
         test_btn.clicked.connect(self._test_connection)
         db_layout.addRow("", test_btn)
@@ -190,24 +164,12 @@ class SettingsDialog(QDialog):
         btn_row.addStretch()
 
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet(Styles.secondary_button())
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
 
         save_btn = QPushButton("💾 Save")
-        save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3a7bd5;
-                border: none;
-                border-radius: 6px;
-                padding: 6px 24px;
-                font-size: 12px;
-                font-weight: 600;
-                color: #fff;
-            }
-            QPushButton:hover {
-                background-color: #4a8be5;
-            }
-        """)
+        save_btn.setStyleSheet(Styles.primary_button())
         save_btn.clicked.connect(self.accept)
         btn_row.addWidget(save_btn)
 

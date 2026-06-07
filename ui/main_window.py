@@ -11,10 +11,12 @@ from asset_browser.core.models import MOCK_DRAFTS, Draft
 from asset_browser.core.search import DraftSearch
 from asset_browser.db.json_store import JSONDraftStorage
 from asset_browser.utils.logger import get_logger
+from asset_browser.ui.theme import Color, FontSize, Styles, master_stylesheet
 from asset_browser.ui.widgets.search_bar import SearchBar
 from asset_browser.ui.widgets.sidebar_filter import SidebarFilter
 from asset_browser.ui.widgets.user_badge import UserBadge
 from asset_browser.ui.widgets.thumbnail_grid import ThumbnailGrid
+from asset_browser.ui.widgets.toast import Toast
 from asset_browser.ui.dialogs.save_dialog import SaveDraftDialog
 from asset_browser.ui.dialogs.settings_dialog import SettingsDialog
 
@@ -28,16 +30,21 @@ class MainWindow(QWidget):
         super().__init__(parent)
 
         # ── Storage layer ───────────────────────────────────────────────
-        self._store = JSONDraftStorage()
-        self._drafts = self._store.list_drafts()
-
-        # Seed with mock data on first run (empty store)
-        if not self._drafts:
-            logger.info("Empty store — seeding with %d mock drafts", len(MOCK_DRAFTS))
-            for mock_draft in MOCK_DRAFTS:
-                self._store.add_draft(mock_draft)
+        try:
+            self._store = JSONDraftStorage()
             self._drafts = self._store.list_drafts()
-            logger.info("Seeded %d drafts", len(self._drafts))
+
+            # Seed with mock data on first run (empty store)
+            if not self._drafts:
+                logger.info("Empty store — seeding with %d mock drafts", len(MOCK_DRAFTS))
+                for mock_draft in MOCK_DRAFTS:
+                    self._store.add_draft(mock_draft)
+                self._drafts = self._store.list_drafts()
+                logger.info("Seeded %d drafts", len(self._drafts))
+        except Exception as exc:
+            logger.error("Storage init failed: %s", exc)
+            self._store = JSONDraftStorage()  # last-resort in-memory store
+            self._drafts = []
 
         self._search_engine = DraftSearch()
         self._search_engine.set_drafts(self._drafts)
@@ -48,13 +55,7 @@ class MainWindow(QWidget):
 
     def _init_ui(self):
         self.setWindowTitle("Nuke Asset Browser")
-        self.setStyleSheet("""
-            QWidget {
-                font-size: 14px;
-                color: #d4d4d4;
-                background-color: #2b2b2b;
-            }
-        """)
+        self.setStyleSheet(master_stylesheet())
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -75,16 +76,7 @@ class MainWindow(QWidget):
         self._settings_btn = QPushButton("⚙️")
         self._settings_btn.setFixedSize(32, 32)
         self._settings_btn.setCursor(Qt.PointingHandCursor)
-        self._settings_btn.setStyleSheet("""
-            QPushButton {
-                border: none;
-                font-size: 16px;
-            }
-            QPushButton:hover {
-                background: #333;
-                border-radius: 4px;
-            }
-        """)
+        self._settings_btn.setStyleSheet(Styles.icon_button())
         self._settings_btn.clicked.connect(self._open_settings)
         top_layout.addWidget(self._settings_btn)
         top_layout.addSpacing(7)
@@ -222,7 +214,7 @@ class MainWindow(QWidget):
 
             draft = self._store.add_draft(draft)
             self._load_drafts(self._store.list_drafts())
-            self._status_label.setText(f"📦 Saved: {draft.name}")
+            Toast.appear(self, f"📦 Saved: {draft.name}", Toast.SUCCESS)
 
         dialog.saved.connect(_on_saved)
         dialog.open()
@@ -245,11 +237,24 @@ class MainWindow(QWidget):
     def _on_draft_activated(self, draft_id: int):
         draft = self._search_engine.get_draft(draft_id)
         if draft:
-            self._status_label.setText(f"📥 Activated: {draft.name}")
+            Toast.appear(self, f"📥 Activated: {draft.name}", Toast.INFO)
 
     def _on_delete_draft(self, draft_id: int):
+        from PySide6.QtWidgets import QMessageBox
+        draft = self._store.get_draft(draft_id)
+        if not draft:
+            return
+        reply = QMessageBox.question(
+            self, "Delete Draft",
+            f'Delete "{draft.name}"?\nThis cannot be undone.',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
         self._store.delete_draft(draft_id)
         self._load_drafts(self._store.list_drafts())
+        Toast.appear(self, f"🗑️ Deleted: {draft.name}", Toast.SUCCESS)
 
     def _on_favorite_toggled(self, draft_id: int, new_state: bool):
         draft = self._store.get_draft(draft_id)
@@ -257,6 +262,8 @@ class MainWindow(QWidget):
             draft.favorite = new_state
             self._store.update_draft(draft)
             self._update_counts()
+            toast_msg = "Favorited" if new_state else "Unfavorited"
+            Toast.appear(self, f"{toast_msg}: {draft.name}", Toast.SUCCESS)
 
     def _open_settings(self):
         dialog = SettingsDialog(self)

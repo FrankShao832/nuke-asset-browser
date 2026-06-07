@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from asset_browser.core.models import Draft
+from asset_browser.ui.theme import Color, FontSize, Styles
 
 
 class SaveDraftDialog(QDialog):
@@ -27,48 +28,48 @@ class SaveDraftDialog(QDialog):
     def _init_ui(self):
         self.setWindowTitle("Save Draft")
         self.setFixedSize(480, 480)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #242424;
-                border: 1px solid #3a3a3a;
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {Color.WINDOW};
+                border: 1px solid {Color.BORDER};
                 border-radius: 8px;
-            }
-            QLabel {
-                font-size: 15px;
-                color: #bbb;
-            }
-            QLineEdit, QTextEdit {
-                background-color: transparent;
-                border: 1px solid #3a3a3a;
+            }}
+            QLabel {{
+                font-size: {FontSize.TAB};
+                color: {Color.TEXT_SECONDARY};
+            }}
+            QLineEdit, QTextEdit {{
+                background-color: {Color.TRANSPARENT};
+                border: 1px solid {Color.BORDER};
                 border-radius: 4px;
                 padding: 6px 8px;
-                font-size: 15px;
-                color: #ddd;
-            }
-            QLineEdit:focus, QTextEdit:focus {
-                border: 1px solid #3a7bd5;
-            }
-            QComboBox {
-                background-color: #1e1e1e;
-                border: 1px solid #555;
+                font-size: {FontSize.TAB};
+                color: {Color.TEXT_PRIMARY};
+            }}
+            QLineEdit:focus, QTextEdit:focus {{
+                border: 1px solid {Color.ACCENT};
+            }}
+            QComboBox {{
+                background-color: {Color.PANEL};
+                border: 1px solid {Color.BTN_HOVER};
                 border-radius: 4px;
                 padding: 6px 8px;
-                font-size: 15px;
-                color: #ddd;
-            }
-            QComboBox:focus {
-                border: 1px solid #3a7bd5;
-            }
-            QComboBox::drop-down {
+                font-size: {FontSize.TAB};
+                color: {Color.TEXT_PRIMARY};
+            }}
+            QComboBox:focus {{
+                border: 1px solid {Color.ACCENT};
+            }}
+            QComboBox::drop-down {{
                 border: none;
                 width: 24px;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #2b2b2b;
-                border: 1px solid #3a3a3a;
-                selection-background-color: #3a7bd5;
-                color: #ddd;
-            }
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {Color.WINDOW};
+                border: 1px solid {Color.BORDER};
+                selection-background-color: {Color.ACCENT};
+                color: {Color.TEXT_PRIMARY};
+            }}
         """)
 
         root = QVBoxLayout(self)
@@ -77,7 +78,7 @@ class SaveDraftDialog(QDialog):
 
         # Title
         title = QLabel("📦 Save New Draft")
-        title.setStyleSheet("font-size: 16px; font-weight: 700; color: #fff;")
+        title.setStyleSheet(Styles.label_title())
         root.addWidget(title)
 
         root.addSpacing(4)
@@ -124,40 +125,13 @@ class SaveDraftDialog(QDialog):
 
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setFixedSize(100, 34)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #333;
-                border: 1px solid #555;
-                border-radius: 6px;
-                font-size: 15px;
-                color: #bbb;
-            }
-            QPushButton:hover {
-                background-color: #3a3a3a;
-                color: #ddd;
-            }
-        """)
+        cancel_btn.setStyleSheet(Styles.secondary_button())
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
 
         save_btn = QPushButton("💾 Save")
         save_btn.setFixedSize(100, 34)
-        save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3a7bd5;
-                border: none;
-                border-radius: 6px;
-                font-size: 15px;
-                font-weight: 600;
-                color: #fff;
-            }
-            QPushButton:hover {
-                background-color: #4a8be5;
-            }
-            QPushButton:pressed {
-                background-color: #2a6bc5;
-            }
-        """)
+        save_btn.setStyleSheet(Styles.primary_button())
         save_btn.clicked.connect(self._on_save)
         btn_row.addWidget(save_btn)
 
