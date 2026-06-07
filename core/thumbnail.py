@@ -316,6 +316,9 @@ def _load_exr_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
         # Tone-map: Reinhard log-average → gamma 2.2 → 8-bit
         def tonemap(rgb: np.ndarray) -> np.ndarray:
             """Reinhard global tonemap with log-average key + gamma 2.2."""
+            # Clamp negatives — EXR can have sub-zero values from the renderer
+            rgb = np.maximum(rgb, 0.0)
+            # Luminance (Rec.709 weights)
             lum = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
             # Log-average luminance (Reinhard 'key' value)
             log_lum = np.log(np.maximum(lum, 1e-6))
@@ -326,7 +329,6 @@ def _load_exr_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
             arr = arr / (1.0 + arr)  # L/(1+L) maps [0,∞) → [0,1)
             # Gamma correction
             arr = np.power(arr, 1.0 / 2.2)
-            # Clamp just in case
             np.clip(arr, 0.0, 1.0, out=arr)
             return (arr * 255.0).astype(np.uint8)
 
