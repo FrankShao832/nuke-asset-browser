@@ -30,6 +30,10 @@ _DEFAULT_CONFIG = {
     ),
     # Thumbnail
     "thumbnail_size": [260, 180],
+    "thumbnail_cache_dir": os.path.join(
+        os.environ.get("HOME", os.path.expanduser("~")),
+        ".nuke", "AssetBrowser", "thumbnails"
+    ),
 
     # Cache
     "json_cache_path": os.path.join(
@@ -127,6 +131,11 @@ class Config:
     def thumbnail_size(self) -> list[int]:
         """Thumbnail dimensions [width, height]."""
         return list(_resolve("thumbnail_size", self._file_cfg))  # type: ignore[arg-type]
+
+    @property
+    def thumbnail_cache_dir(self) -> str:
+        """Directory where generated thumbnail images are cached."""
+        return _resolve("thumbnail_cache_dir", self._file_cfg)  # type: ignore[return-value]
 
     @property
     def json_cache_path(self) -> str:

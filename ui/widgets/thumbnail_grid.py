@@ -10,8 +10,9 @@ from PySide6.QtCore import Signal, Qt, QSize, QRect, QPoint, QMimeData, QUrl
 from PySide6.QtGui import QDrag, QPixmap
 
 from asset_browser.core.models import Draft
-from asset_browser.core.thumbnail import get_placeholder_thumbnail
+from asset_browser.core.thumbnail import get_thumbnail, invalidate_cache, _CARD_W, _CARD_H
 from asset_browser.ui.widgets.draft_badge import DraftBadge, FavoriteStar
+from asset_browser.utils.config import config
 
 
 class FlowLayout(QLayout):
@@ -121,10 +122,11 @@ class ThumbnailCard(QFrame):
     double_clicked = Signal(int)
     context_requested = Signal(int, QPoint)
 
-    def __init__(self, draft: Draft, thumbnail=None, parent=None):
+    def __init__(self, draft: Draft, thumbnail=None, thumb_cache_dir=None, parent=None):
         super().__init__(parent)
         self._draft = draft
         self._thumbnail = thumbnail
+        self._thumb_cache_dir = thumb_cache_dir
         self._drag_start_pos: QPoint | None = None
         self.setFixedSize(200, 160)
         self.setCursor(Qt.PointingHandCursor)
@@ -220,14 +222,23 @@ class ThumbnailCard(QFrame):
         layout.addWidget(info)
 
     def _update_thumb(self):
-        if self._thumbnail:
+        if self._thumbnail is not None:
             pix = self._thumbnail
         else:
-            pix = get_placeholder_thumbnail(self._draft.draft_type, (200, 120))
-        self._thumb_label.setPixmap(pix.scaled(200, 120, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
+            thumb_dir = self._thumb_cache_dir or config.thumbnail_cache_dir
+            pix = get_thumbnail(self._draft, thumb_dir)
+        self._thumb_label.setPixmap(
+            pix.scaled(_CARD_W, _CARD_H,
+                       Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        )
 
     def set_thumbnail(self, pixmap):
         self._thumbnail = pixmap
+        self._update_thumb()
+
+    def refresh_thumbnail(self):
+        """Re-resolve thumbnail from storage (bypasses cached pixmap)."""
+        self._thumbnail = None
         self._update_thumb()
 
     def set_favorite(self, fav: bool):
@@ -296,6 +307,7 @@ class ThumbnailGrid(QScrollArea):
         super().__init__(parent)
         self._cards: dict[int, ThumbnailCard] = {}
         self._drafts: list[Draft] = []
+        self._thumb_cache_dir = config.thumbnail_cache_dir
         self._layout = FlowLayout(spacing=8, margin=8)
 
         self.setWidgetResizable(True)
@@ -359,7 +371,7 @@ class ThumbnailGrid(QScrollArea):
             self._layout.setGeometry(QRect(0, 0, vp_w, content.height()))
 
     def _add_card(self, draft: Draft):
-        card = ThumbnailCard(draft)
+        card = ThumbnailCard(draft, thumb_cache_dir=self._thumb_cache_dir)
         card.clicked.connect(lambda did: self.draft_selected.emit(did))
         card.double_clicked.connect(lambda did: self.draft_activated.emit(did))
         card.context_requested.connect(self._show_context_menu)

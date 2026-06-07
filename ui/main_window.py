@@ -6,10 +6,11 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
 )
 from PySide6.QtCore import Qt
-from dataclasses import asdict
 
 from asset_browser.core.models import MOCK_DRAFTS, Draft
 from asset_browser.core.search import DraftSearch
+from asset_browser.db.json_store import JSONDraftStorage
+from asset_browser.utils.logger import get_logger
 from asset_browser.ui.widgets.search_bar import SearchBar
 from asset_browser.ui.widgets.sidebar_filter import SidebarFilter
 from asset_browser.ui.widgets.user_badge import UserBadge
@@ -17,13 +18,27 @@ from asset_browser.ui.widgets.thumbnail_grid import ThumbnailGrid
 from asset_browser.ui.dialogs.save_dialog import SaveDraftDialog
 from asset_browser.ui.dialogs.settings_dialog import SettingsDialog
 
+logger = get_logger(__name__)
+
 
 class MainWindow(QWidget):
     """Nuke Asset Browser — main window (no custom stylesheets)"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._drafts = self._load_from_json() or list(MOCK_DRAFTS)
+
+        # ── Storage layer ───────────────────────────────────────────────
+        self._store = JSONDraftStorage()
+        self._drafts = self._store.list_drafts()
+
+        # Seed with mock data on first run (empty store)
+        if not self._drafts:
+            logger.info("Empty store — seeding with %d mock drafts", len(MOCK_DRAFTS))
+            for mock_draft in MOCK_DRAFTS:
+                self._store.add_draft(mock_draft)
+            self._drafts = self._store.list_drafts()
+            logger.info("Seeded %d drafts", len(self._drafts))
+
         self._search_engine = DraftSearch()
         self._search_engine.set_drafts(self._drafts)
 
@@ -145,7 +160,7 @@ class MainWindow(QWidget):
         flt = self._search_engine._filter
         srt = self._search_engine._sort
 
-        parts = ["🔷 Mock Mode"]
+        parts = ["💾 JSON"]
         if kw:
             parts.append(f'🔎 "{kw}"')
         parts.append(f"📂 {flt}")
@@ -205,57 +220,12 @@ class MainWindow(QWidget):
                 except Exception:
                     pass
 
-            draft.id = self._next_draft_id()
-            self._drafts.append(draft)
-            self._save_to_json()
-            self._load_drafts(self._drafts)
+            draft = self._store.add_draft(draft)
+            self._load_drafts(self._store.list_drafts())
             self._status_label.setText(f"📦 Saved: {draft.name}")
 
         dialog.saved.connect(_on_saved)
         dialog.open()
-
-    # ── JSON persistence (lightweight interim storage) ────────────────
-
-    @staticmethod
-    def _drafts_json_path() -> str:
-        """Path to the persistent drafts JSON file."""
-        import os
-        return os.path.join(
-            os.path.expanduser("~"), ".nuke", "AssetBrowser", "drafts.json"
-        )
-
-    def _load_from_json(self) -> list[Draft] | None:
-        """Load drafts from JSON file. Returns None if file doesn't exist."""
-        import json, os
-        path = self._drafts_json_path()
-        if not os.path.isfile(path):
-            return None
-        try:
-            with open(path, "r") as f:
-                data = json.load(f)
-            return [Draft(**item) for item in data]
-        except Exception:
-            return None
-
-    def _save_to_json(self) -> None:
-        """Persist current drafts list to JSON file."""
-        import json, os
-        path = self._drafts_json_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        try:
-            with open(path, "w") as f:
-                json.dump(
-                    [asdict(d) for d in self._drafts],
-                    f, indent=2, ensure_ascii=False,
-                )
-        except Exception:
-            pass
-
-    def _next_draft_id(self) -> int:
-        """Return the next available draft ID."""
-        if not self._drafts:
-            return 1
-        return max(d.id for d in self._drafts) + 1
 
     # ── Internal slots ─────────────────────────────────────────────────
 
@@ -278,17 +248,15 @@ class MainWindow(QWidget):
             self._status_label.setText(f"📥 Activated: {draft.name}")
 
     def _on_delete_draft(self, draft_id: int):
-        self._drafts = [d for d in self._drafts if d.id != draft_id]
-        self._save_to_json()
-        self._load_drafts(self._drafts)
+        self._store.delete_draft(draft_id)
+        self._load_drafts(self._store.list_drafts())
 
     def _on_favorite_toggled(self, draft_id: int, new_state: bool):
-        for d in self._drafts:
-            if d.id == draft_id:
-                d.favorite = new_state
-                break
-        self._save_to_json()
-        self._update_counts()
+        draft = self._store.get_draft(draft_id)
+        if draft:
+            draft.favorite = new_state
+            self._store.update_draft(draft)
+            self._update_counts()
 
     def _open_settings(self):
         dialog = SettingsDialog(self)
