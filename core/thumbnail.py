@@ -106,7 +106,7 @@ def get_thumbnail(
     if draft.sequence_pattern:
         first_frame_path = _sequence_first_frame(draft)
         if first_frame_path and _is_image_file(first_frame_path):
-            pix = QPixmap(first_frame_path)
+            pix = _load_pixmap_safe(first_frame_path)
             if not pix.isNull():
                 logger.debug("Loaded sequence first-frame thumbnail for draft %d", draft.id)
                 # Cache it for next time
@@ -115,7 +115,7 @@ def get_thumbnail(
 
     # 3. Direct image file
     if _is_image_file(draft.path):
-        pix = QPixmap(draft.path)
+        pix = _load_pixmap_safe(draft.path)
         if not pix.isNull():
             logger.debug("Loaded image thumbnail from %s", draft.path)
             # Cache it for next time
@@ -179,6 +179,107 @@ def invalidate_cache(draft_id: int, thumb_cache_dir: str) -> None:
 
 
 # ── Internal helpers ────────────────────────────────────────────────────
+
+def _load_pixmap_safe(path: str) -> QPixmap:
+    """Load a pixmap, falling back to OpenEXR if ``QPixmap`` can't handle it."""
+    pix = QPixmap(path)
+    if not pix.isNull():
+        return pix
+
+    # QPixmap failed — try OpenEXR for .exr files
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".exr":
+        exr_pix = _load_exr_thumbnail(path)
+        if exr_pix and not exr_pix.isNull():
+            return exr_pix
+
+    logger.debug("Could not load image: %s", path)
+    return pix  # null pixmap
+
+
+def _load_exr_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
+    """Read an EXR file and return a downsized QPixmap.
+
+    Args:
+        path: Path to the .exr file.
+        max_dim: Maximum dimension for the thumbnail (preserves aspect).
+
+    Returns:
+        QPixmap or ``None`` on failure.
+    """
+    try:
+        import OpenEXR
+        import Imath
+        import numpy as np
+        from PySide6.QtGui import QImage
+    except ImportError:
+        logger.debug("OpenEXR not available, cannot read %s", path)
+        return None
+
+    try:
+        exr = OpenEXR.InputFile(path)
+        dw = exr.header()["dataWindow"]
+        pw, ph = dw.max.x - dw.min.x + 1, dw.max.y - dw.min.y + 1
+
+        # Determine which channels to read (prefer R,G,B)
+        header = exr.header()
+        chans = header["channels"]
+        if "R" in chans and "G" in chans and "B" in chans:
+            r_str, g_str, b_str = exr.channels("RGB", Imath.PixelType(Imath.PixelType.FLOAT))
+            has_alpha = "A" in chans
+            a_str = exr.channel("A", Imath.PixelType(Imath.PixelType.FLOAT)) if has_alpha else None
+        elif "r" in chans and "g" in chans and "b" in chans:
+            r_str, g_str, b_str = exr.channels("rgb", Imath.PixelType(Imath.PixelType.FLOAT))
+            has_alpha = "a" in chans
+            a_str = exr.channel("a", Imath.PixelType(Imath.PixelType.FLOAT)) if has_alpha else None
+        else:
+            logger.debug("EXR %s has no RGB channels", path)
+            return None
+
+        # Decode to numpy arrays
+        r = np.frombuffer(r_str, dtype=np.float32).reshape(ph, pw)
+        g = np.frombuffer(g_str, dtype=np.float32).reshape(ph, pw)
+        b = np.frombuffer(b_str, dtype=np.float32).reshape(ph, pw)
+
+        # Downsample to max_dim
+        scale = min(max_dim / pw, max_dim / ph, 1.0)
+        if scale < 1.0:
+            nw = max(1, int(pw * scale))
+            nh = max(1, int(ph * scale))
+            # Simple area-averaging downsample
+            r = _downsample(r, nw, nh)
+            g = _downsample(g, nw, nh)
+            b = _downsample(b, nw, nh)
+            pw, ph = nw, nh
+
+        # Tone-map: simple linear to sRGB-ish, clamp to [0,1]
+        def tonemap(arr: np.ndarray) -> np.ndarray:
+            arr = np.clip(arr, 0.0, 1.0)  # simple clamp
+            return (arr * 255.0).astype(np.uint8)
+
+        r8 = tonemap(r)
+        g8 = tonemap(g)
+        b8 = tonemap(b)
+
+        # Pack into QImage (RGB888)
+        rgb = np.stack((r8, g8, b8), axis=-1)
+        img = QImage(rgb.data, pw, ph, pw * 3, QImage.Format_RGB888)
+        return QPixmap.fromImage(img)
+
+    except Exception as exc:
+        logger.warning("Failed to read EXR thumbnail %s: %s", path, exc)
+        return None
+
+
+def _downsample(arr: np.ndarray, nw: int, nh: int) -> np.ndarray:
+    """Simple block-average downsample."""
+    import numpy as np
+    h, w = arr.shape
+    row_factor = h // nh
+    col_factor = w // nw
+    # Trim to exact multiples
+    arr = arr[:nh * row_factor, :nw * col_factor]
+    return arr.reshape(nh, row_factor, nw, col_factor).mean(axis=(1, 3))
 
 def _is_image_file(path: str) -> bool:
     """Return True if *path* looks like a readable image file."""
