@@ -13,7 +13,10 @@ from PySide6.QtGui import QDrag, QPixmap, QColor
 
 from asset_browser.core.models import Draft
 from asset_browser.core.sequence import detect_sequences, detect_from_file
-from asset_browser.core.thumbnail import get_thumbnail, invalidate_cache, _load_pixmap_safe, _CARD_W, _CARD_H
+from asset_browser.core.thumbnail import (
+    get_thumbnail, invalidate_cache, _load_pixmap_safe, cache_sequence_frames,
+    _CARD_W, _CARD_H,
+)
 from asset_browser.ui.theme import Color, FontSize, Styles
 from asset_browser.ui.widgets.draft_badge import DraftBadge, FavoriteStar
 from asset_browser.utils.config import config
@@ -139,6 +142,7 @@ class ThumbnailCard(QFrame):
 
         # ── Hover playback for sequences ──
         self._playback_frames: list[str] = []
+        self._playback_cache: dict[str, str] = {}  # src → cached PNG path
         self._playback_index = 0
         self._playback_timer = QTimer(self)
         self._playback_timer.setInterval(42)  # ~24 fps
@@ -310,7 +314,7 @@ class ThumbnailCard(QFrame):
     # ── Hover playback (sequence drafts) ────────────────────────────────
 
     def _init_playback_frames(self):
-        """Pre-compute the list of frame paths for sequence drafts."""
+        """Pre-compute source frame paths for sequence drafts."""
         if not self._draft.sequence_pattern or not self._draft.frame_range:
             return
         folder = self._draft.path
@@ -327,6 +331,7 @@ class ThumbnailCard(QFrame):
             for f in range(start, end + 1)
             if os.path.isfile(os.path.join(folder, pattern % f))
         ]
+        self._playback_cache: dict[str, str] = {}  # src → cached PNG path
 
     def _playback_tick(self):
         """Advance to the next frame."""
@@ -334,8 +339,26 @@ class ThumbnailCard(QFrame):
             self._playback_timer.stop()
             return
         self._playback_index = (self._playback_index + 1) % len(self._playback_frames)
-        path = self._playback_frames[self._playback_index]
-        pix = _load_pixmap_safe(path)
+        src = self._playback_frames[self._playback_index]
+
+        # Use cached PNG if available, otherwise load & cache
+        cached = self._playback_cache.get(src)
+        if cached and os.path.isfile(cached):
+            pix = QPixmap(cached)
+        else:
+            pix = _load_pixmap_safe(src)
+            if not pix.isNull():
+                # Cache as PNG for next time
+                cache_dir = self._thumb_cache_dir or config.thumbnail_cache_dir
+                os.makedirs(cache_dir, exist_ok=True)
+                cache_name = f"play_{self._draft.id}_{self._playback_index:04d}.png"
+                cache_path = os.path.join(cache_dir, cache_name)
+                if pix.width() > 256 or pix.height() > 256:
+                    pix = pix.scaled(256, 256, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pix.save(cache_path, "PNG")
+                self._playback_cache[src] = cache_path
+                pix = QPixmap(cache_path)  # reload cached copy
+
         if not pix.isNull():
             self._thumb_label.setPixmap(
                 pix.scaled(188, 108, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)

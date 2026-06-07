@@ -178,6 +178,68 @@ def invalidate_cache(draft_id: int, thumb_cache_dir: str) -> None:
         logger.warning("Failed to remove cached thumbnail %s: %s", path, exc)
 
 
+def cache_sequence_frames(
+    folder: str,
+    pattern: str,
+    frame_range: str,
+    thumb_cache_dir: str,
+    max_dim: int = 256,
+) -> list[str]:
+    """Pre-convert all frames of an image sequence to cached PNG thumbnails.
+
+    Args:
+        folder: Folder containing the sequence.
+        pattern: e.g. ``"render_%04d.exr"``.
+        frame_range: e.g. ``"1001-1048"``.
+        thumb_cache_dir: Where to write the cached PNGs.
+        max_dim: Maximum dimension for cached thumbnails.
+
+    Returns:
+        List of cached PNG file paths (one per frame).
+    """
+    if "-" not in frame_range:
+        return []
+    try:
+        start, end = int(frame_range.split("-")[0]), int(frame_range.split("-")[1])
+    except (ValueError, IndexError):
+        return []
+
+    os.makedirs(thumb_cache_dir, exist_ok=True)
+    cached: list[str] = []
+
+    for i, f in enumerate(range(start, end + 1)):
+        src = os.path.join(folder, pattern % f)
+        if not os.path.isfile(src):
+            continue
+        # Cache name: sequence_{draft_id}_{frame_index}.png
+        cache_name = f"seq_{os.path.basename(folder)}_{i:04d}.png"
+        cache_path = os.path.join(thumb_cache_dir, cache_name)
+
+        if os.path.isfile(cache_path):
+            cached.append(cache_path)
+            continue
+
+        pix = _load_pixmap_safe(src)
+        if pix.isNull():
+            cached.append(src)  # fallback: use source path
+            continue
+
+        # Downscale for playback speed
+        if pix.width() > max_dim or pix.height() > max_dim:
+            pix = pix.scaled(
+                max_dim, max_dim, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+        ok = pix.save(cache_path, "PNG")
+        if ok:
+            cached.append(cache_path)
+            logger.debug("Cached sequence frame: %s", cache_path)
+        else:
+            cached.append(src)
+
+    logger.info("Cached %d/%d sequence frames to %s", len(cached), end - start + 1, thumb_cache_dir)
+    return cached
+
+
 # ── Internal helpers ────────────────────────────────────────────────────
 
 def _load_pixmap_safe(path: str) -> QPixmap:
@@ -246,25 +308,35 @@ def _load_exr_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
         if scale < 1.0:
             nw = max(1, int(pw * scale))
             nh = max(1, int(ph * scale))
-            # Simple area-averaging downsample
             r = _downsample(r, nw, nh)
             g = _downsample(g, nw, nh)
             b = _downsample(b, nw, nh)
             pw, ph = nw, nh
 
-        # Tone-map: linear → gamma 2.2 → sRGB-ish 8-bit
-        def tonemap(arr: np.ndarray) -> np.ndarray:
-            arr = np.clip(arr, 0.0, 1.0)
-            arr = np.power(arr, 1.0 / 2.2)  # gamma correction
+        # Auto-exposure + gamma 2.2 tone-map
+        def tonemap(rgb: np.ndarray) -> np.ndarray:
+            """Linear → auto-exposure → gamma 2.2 → 8-bit."""
+            # Luminance weights (Rec.709)
+            lum = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
+            # Find 99th percentile luminance for auto-exposure
+            flat = lum.flatten()
+            flat.sort()
+            p99 = flat[max(0, int(len(flat) * 0.99) - 1)]
+            exposure = 1.0 / max(p99, 1e-6)
+            # Apply exposure, clamp, gamma
+            arr = np.clip(rgb * exposure, 0.0, 1.0)
+            arr = np.power(arr, 1.0 / 2.2)
             return (arr * 255.0).astype(np.uint8)
+
+        rgb = np.stack((r, g, b), axis=-1)
+        rgb_8 = tonemap(rgb)
 
         r8 = tonemap(r)
         g8 = tonemap(g)
         b8 = tonemap(b)
 
         # Pack into QImage (RGB888)
-        rgb = np.stack((r8, g8, b8), axis=-1)
-        img = QImage(rgb.data, pw, ph, pw * 3, QImage.Format_RGB888)
+        img = QImage(rgb_8.data, pw, ph, pw * 3, QImage.Format_RGB888)
         return QPixmap.fromImage(img)
 
     except Exception as exc:
