@@ -120,7 +120,7 @@ class DraftSearch:
     def _apply_sort(self, drafts: list[Draft]) -> list[Draft]:
         match self._sort:
             case "latest":
-                return sorted(drafts, key=lambda d: d.created_at, reverse=True)
+                return sorted(drafts, key=lambda d: d.id, reverse=True)
             case "hottest":
                 return sorted(drafts, key=lambda d: d.use_count, reverse=True)
             case _:
