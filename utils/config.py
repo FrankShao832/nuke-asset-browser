@@ -24,6 +24,10 @@ _DEFAULT_CONFIG = {
     # User
     "user_name": os.environ.get("USER", os.environ.get("USERNAME", "artist")),
 
+    # Templates / drafts
+    "template_dir": os.path.join(
+        os.path.expanduser("~"), ".nuke", "AssetBrowser", "templates"
+    ),
     # Thumbnail
     "thumbnail_size": [260, 180],
 
@@ -128,6 +132,15 @@ class Config:
     def json_cache_path(self) -> str:
         """Directory for JSON cache / offline fallback storage."""
         return _resolve("json_cache_path", self._file_cfg)  # type: ignore[return-value]
+
+    @property
+    def template_dir(self) -> str:
+        """Persistent directory for exported .nk templates.
+
+        Controlled by env var ``AM_TEMPLATE_DIR``.
+        Defaults to ``~/.nuke/AssetBrowser/templates/``.
+        """
+        return _resolve("template_dir", self._file_cfg)  # type: ignore[return-value]
 
     @property
     def pg_host(self) -> str:

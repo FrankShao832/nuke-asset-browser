@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-    QMenu, QFrame, QLayout, QLayoutItem,
+    QMenu, QFrame, QLayout, QLayoutItem, QApplication,
 )
-from PySide6.QtCore import Signal, Qt, QSize, QRect, QPoint
+from PySide6.QtCore import Signal, Qt, QSize, QRect, QPoint, QMimeData, QUrl
+from PySide6.QtGui import QDrag, QPixmap
 
 from asset_browser.core.models import Draft
 from asset_browser.core.thumbnail import get_placeholder_thumbnail
@@ -124,6 +125,7 @@ class ThumbnailCard(QFrame):
         super().__init__(parent)
         self._draft = draft
         self._thumbnail = thumbnail
+        self._drag_start_pos: QPoint | None = None
         self.setFixedSize(200, 160)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet("""
@@ -238,7 +240,40 @@ class ThumbnailCard(QFrame):
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
         if event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.position().toPoint()
             self.clicked.emit(self._draft.id)
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton) or self._drag_start_pos is None:
+            super().mouseMoveEvent(event)
+            return
+
+        # Start drag if mouse has moved far enough
+        if (event.position().toPoint() - self._drag_start_pos).manhattanLength() < 10:
+            return
+
+        drag = QDrag(self)
+        mime = QMimeData()
+
+        # ── Set MIME data for Nuke Node Graph drop ──
+        file_path = self._draft.path
+        if file_path:
+            from pathlib import Path
+            as_posix = Path(file_path).as_posix()
+            mime.setUrls([QUrl.fromLocalFile(as_posix)])
+            mime.setText(as_posix)
+
+        drag.setMimeData(mime)
+
+        # ── Drag pixmap ──
+        pix = self.grab().scaled(160, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        drag.setPixmap(pix)
+        drag.setHotSpot(QPoint(pix.width() // 2, pix.height() // 2))
+
+        # Execute drag (modal loop, blocks until drop or cancel)
+        drag.exec(Qt.CopyAction)
+
+        self._drag_start_pos = None
 
     def mouseDoubleClickEvent(self, event):
         super().mouseDoubleClickEvent(event)

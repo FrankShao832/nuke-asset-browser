@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
 )
 from PySide6.QtCore import Qt
+from dataclasses import asdict
 
 from asset_browser.core.models import MOCK_DRAFTS, Draft
 from asset_browser.core.search import DraftSearch
@@ -22,7 +23,7 @@ class MainWindow(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._drafts = list(MOCK_DRAFTS)
+        self._drafts = self._load_from_json() or list(MOCK_DRAFTS)
         self._search_engine = DraftSearch()
         self._search_engine.set_drafts(self._drafts)
 
@@ -168,6 +169,96 @@ class MainWindow(QWidget):
         self._search_engine.set_sort(sort_key)
         self._refresh()
 
+    # ── Public API (called from Nuke right-click) ──────────────────────
+
+    def open_save_dialog_for_nuke(
+        self,
+        name: str,
+        filepath: str,
+        draft_type: str = "template",
+    ) -> None:
+        """Open the save dialog pre-filled with exported Nuke node info.
+
+        Args:
+            name: Suggested template name (from node names).
+            filepath: Path to the exported .nk file.
+            draft_type: Draft type (template/image/video/script).
+        """
+        import os
+        defaults = {
+            "name": name,
+            "path": filepath,
+            "draft_type": draft_type,
+        }
+        dialog = SaveDraftDialog(defaults, self)
+
+        def _on_saved(draft: Draft) -> None:
+            # Rename .nk file to match user-entered draft name
+            old_path = filepath
+            safe_name = draft.name.strip().replace(" ", "_")
+            new_path = os.path.join(os.path.dirname(old_path), f"{safe_name}.nk")
+            if old_path != new_path:
+                import shutil
+                try:
+                    shutil.move(old_path, new_path)
+                    draft.path = new_path
+                except Exception:
+                    pass
+
+            draft.id = self._next_draft_id()
+            self._drafts.append(draft)
+            self._save_to_json()
+            self._load_drafts(self._drafts)
+            self._status_label.setText(f"📦 Saved: {draft.name}")
+
+        dialog.saved.connect(_on_saved)
+        dialog.open()
+
+    # ── JSON persistence (lightweight interim storage) ────────────────
+
+    @staticmethod
+    def _drafts_json_path() -> str:
+        """Path to the persistent drafts JSON file."""
+        import os
+        return os.path.join(
+            os.path.expanduser("~"), ".nuke", "AssetBrowser", "drafts.json"
+        )
+
+    def _load_from_json(self) -> list[Draft] | None:
+        """Load drafts from JSON file. Returns None if file doesn't exist."""
+        import json, os
+        path = self._drafts_json_path()
+        if not os.path.isfile(path):
+            return None
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            return [Draft(**item) for item in data]
+        except Exception:
+            return None
+
+    def _save_to_json(self) -> None:
+        """Persist current drafts list to JSON file."""
+        import json, os
+        path = self._drafts_json_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path, "w") as f:
+                json.dump(
+                    [asdict(d) for d in self._drafts],
+                    f, indent=2, ensure_ascii=False,
+                )
+        except Exception:
+            pass
+
+    def _next_draft_id(self) -> int:
+        """Return the next available draft ID."""
+        if not self._drafts:
+            return 1
+        return max(d.id for d in self._drafts) + 1
+
+    # ── Internal slots ─────────────────────────────────────────────────
+
     def _on_upload(self):
         file_paths, _ = QFileDialog.getOpenFileNames(
             self, "Select files to upload as Draft", "", "All Files (*)"
@@ -188,9 +279,15 @@ class MainWindow(QWidget):
 
     def _on_delete_draft(self, draft_id: int):
         self._drafts = [d for d in self._drafts if d.id != draft_id]
+        self._save_to_json()
         self._load_drafts(self._drafts)
 
     def _on_favorite_toggled(self, draft_id: int, new_state: bool):
+        for d in self._drafts:
+            if d.id == draft_id:
+                d.favorite = new_state
+                break
+        self._save_to_json()
         self._update_counts()
 
     def _open_settings(self):

@@ -1,16 +1,15 @@
+#!/Applications/Nuke16.0v3/Nuke16.0v3.app/Contents/Frameworks/Python.framework/Versions/3.11/bin/python3.11
 """Nuke Asset Browser — Save Draft dialog"""
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QTextEdit, QPushButton, QComboBox, QFrame, QWidget,
+    QTextEdit, QPushButton, QComboBox, QWidget,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap, QFont
 
 from asset_browser.core.models import Draft
-from asset_browser.core.thumbnail import get_placeholder_thumbnail
 
 
 class SaveDraftDialog(QDialog):
@@ -21,6 +20,7 @@ class SaveDraftDialog(QDialog):
     def __init__(self, defaults: dict | None = None, parent=None):
         super().__init__(parent)
         self._defaults = defaults or {}
+        self._path_override: str | None = None
         self._init_ui()
         self._apply_defaults()
 
@@ -34,15 +34,15 @@ class SaveDraftDialog(QDialog):
                 border-radius: 8px;
             }
             QLabel {
-                font-size: 11px;
+                font-size: 15px;
                 color: #bbb;
             }
             QLineEdit, QTextEdit {
-                background-color: #1e1e1e;
+                background-color: transparent;
                 border: 1px solid #3a3a3a;
                 border-radius: 4px;
                 padding: 6px 8px;
-                font-size: 12px;
+                font-size: 15px;
                 color: #ddd;
             }
             QLineEdit:focus, QTextEdit:focus {
@@ -50,10 +50,10 @@ class SaveDraftDialog(QDialog):
             }
             QComboBox {
                 background-color: #1e1e1e;
-                border: 1px solid #3a3a3a;
+                border: 1px solid #555;
                 border-radius: 4px;
                 padding: 6px 8px;
-                font-size: 12px;
+                font-size: 15px;
                 color: #ddd;
             }
             QComboBox:focus {
@@ -73,7 +73,7 @@ class SaveDraftDialog(QDialog):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
-        root.setSpacing(12)
+        # root.setSpacing(12)
 
         # Title
         title = QLabel("📦 Save New Draft")
@@ -81,15 +81,6 @@ class SaveDraftDialog(QDialog):
         root.addWidget(title)
 
         root.addSpacing(4)
-
-        # ── Preview thumbnail ──
-        thumb_row = QHBoxLayout()
-        self._thumb_label = QLabel()
-        self._thumb_label.setFixedSize(120, 68)
-        self._thumb_label.setAlignment(Qt.AlignCenter)
-        thumb_row.addWidget(self._thumb_label)
-        thumb_row.addStretch()
-        root.addLayout(thumb_row)
 
         # ── Name ──
         root.addWidget(QLabel("Name *"))
@@ -101,7 +92,6 @@ class SaveDraftDialog(QDialog):
         root.addWidget(QLabel("Type"))
         self._type_combo = QComboBox()
         self._type_combo.addItems(["template", "image", "video", "script", "other"])
-        self._type_combo.currentTextChanged.connect(self._on_type_changed)
         root.addWidget(self._type_combo)
 
         # ── Description ──
@@ -109,6 +99,7 @@ class SaveDraftDialog(QDialog):
         self._desc_input = QTextEdit()
         self._desc_input.setPlaceholderText("Brief description of this draft...")
         self._desc_input.setFixedHeight(60)
+        self._desc_input.setObjectName("descInput")
         root.addWidget(self._desc_input)
 
         # ── Tags ──
@@ -138,7 +129,7 @@ class SaveDraftDialog(QDialog):
                 background-color: #333;
                 border: 1px solid #555;
                 border-radius: 6px;
-                font-size: 12px;
+                font-size: 15px;
                 color: #bbb;
             }
             QPushButton:hover {
@@ -156,7 +147,7 @@ class SaveDraftDialog(QDialog):
                 background-color: #3a7bd5;
                 border: none;
                 border-radius: 6px;
-                font-size: 12px;
+                font-size: 15px;
                 font-weight: 600;
                 color: #fff;
             }
@@ -179,22 +170,18 @@ class SaveDraftDialog(QDialog):
             idx = self._type_combo.findText(self._defaults["draft_type"])
             if idx >= 0:
                 self._type_combo.setCurrentIndex(idx)
-        # Update thumbnail preview
-        self._on_type_changed(self._type_combo.currentText())
-
-    def _on_type_changed(self, draft_type: str):
-        pix = get_placeholder_thumbnail(draft_type, (120, 68))
-        self._thumb_label.setPixmap(pix)
+        if "path" in self._defaults:
+            self._path_override = self._defaults["path"]
 
     def _on_save(self):
         name = self._name_input.text().strip()
         if not name:
             self._name_input.setStyleSheet("""
-                background-color: #1e1e1e;
+                background-color: transparent;
                 border: 1px solid #e53935;
                 border-radius: 4px;
                 padding: 6px 8px;
-                font-size: 12px;
+                font-size: 15px;
                 color: #ddd;
             """)
             self._name_input.setFocus()
@@ -202,11 +189,17 @@ class SaveDraftDialog(QDialog):
 
         # Generate an ID (negative for new drafts, storage will assign real ID)
         import time
+        # Use exported file path if provided, otherwise default
+        if self._path_override:
+            draft_path = self._path_override
+        else:
+            draft_path = f"/tools/{name}.nk"
+
         draft = Draft(
             id=int(time.time() * 1000) % 100000,  # temp ID
             name=name,
             draft_type=self._type_combo.currentText(),
-            path=f"/tools/{name}.nk",
+            path=draft_path,
             author="frank",
             status="draft",
             visibility=self._vis_combo.currentText(),
@@ -215,3 +208,47 @@ class SaveDraftDialog(QDialog):
         )
         self.saved.emit(draft)
         self.accept()
+
+
+# ═════════════════════════════════════════════════════════════════════
+#  Standalone entry point (for UI debugging without Nuke)
+# ═════════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    import sys
+    import os
+
+    # Add project root's parent to path so `import asset_browser` works
+    _root = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..")
+    )
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication(sys.argv)
+
+    # Mock a Draft instance so the dialog can emit
+    dialog = SaveDraftDialog(defaults={
+        "name": "my_grade_node",
+        "draft_type": "Gizmo",
+        "description": "A quick grade for temp matching",
+        "tags": "grade,color,lookdev",
+        "visibility": "Public",
+        "path": "/tools/my_grade_node.nk",
+    })
+
+    def _on_saved(draft):
+        print(f"✅ Draft saved: {draft}")
+        print(f"   name  : {draft.name}")
+        print(f"   type  : {draft.draft_type}")
+        print(f"   path  : {draft.path}")
+        print(f"   vis   : {draft.visibility}")
+        print(f"   desc  : {draft.description}")
+        print(f"   tags  : {draft.tags}")
+
+    dialog.saved.connect(_on_saved)
+    dialog.show()
+
+    sys.exit(app.exec())

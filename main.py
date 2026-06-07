@@ -77,6 +77,84 @@ def open_browser() -> None:
     win.raise_()
 
 
+# ── T2.2: Node Graph right-click "Save to Asset Browser" ────────────────
+
+def save_selection_as_draft() -> None:
+    """Save selected Nuke nodes as a draft (called from Node Graph menu).
+
+    Flow:
+      1. Export selected nodes → temp .nk file
+      2. Open browser window (singleton)
+      3. Pre-fill SaveDraftDialog with node names
+      4. On confirm → add draft to browser list & refresh
+
+    Designed to be invoked from Nuke's Node Graph right-click menu.
+    """
+    from asset_browser.utils.nuke_utils import (
+        get_selected_nodes,
+        export_selection_to_nk,
+        generate_template_name,
+        get_template_dir,
+    )
+
+    nodes = get_selected_nodes()
+    if not nodes:
+        try:
+            import nuke
+            nuke.tprint("⚠️  Asset Browser: No nodes selected")
+        except ImportError:
+            print("⚠️  Asset Browser: No nodes selected")
+        return
+
+    # ── Export to temp .nk ──
+    template_name = generate_template_name(nodes)
+    temp_dir = get_template_dir()
+    nk_path = os.path.join(temp_dir, f"{template_name}.nk")
+
+    exported = export_selection_to_nk(nk_path)
+    if not exported:
+        try:
+            import nuke
+            nuke.tprint("⚠️  Asset Browser: Failed to export selection")
+        except ImportError:
+            print("⚠️  Asset Browser: Failed to export selection")
+        return
+
+    # ── Determine draft type ──
+    # Heuristic: single node → use its class; multiple → "template"
+    draft_type = "template"
+    if len(nodes) == 1:
+        cls = nodes[0].Class()
+        if cls in ("Read", "Write"):
+            draft_type = "image"
+        elif cls in ("Viewer",):
+            draft_type = "video"
+
+    # ── Open browser and show save dialog ──
+    from asset_browser.ui.main_window import MainWindow
+
+    key = "__main__"
+    if key not in _windows:
+        _windows[key] = MainWindow()
+
+    win: MainWindow = _windows[key]
+    win.show()
+    win.raise_()
+
+    # Restore focus to Nuke after Qt dialog opens naturally
+    win.open_save_dialog_for_nuke(
+        name=template_name,
+        filepath=nk_path,
+        draft_type=draft_type,
+    )
+
+    try:
+        import nuke
+        nuke.tprint(f"✅ Asset Browser: '{template_name}' ready to save")
+    except ImportError:
+        print(f"✅ Asset Browser: '{template_name}' ready to save")
+
+
 # ── Entry point ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
     run_standalone()
