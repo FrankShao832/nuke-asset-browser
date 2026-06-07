@@ -15,7 +15,9 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PySide6.QtGui import QPixmap, QPainter, QColor, QFont
+import numpy as np
+
+from PySide6.QtGui import QPixmap, QImage, QPainter, QColor, QFont
 from PySide6.QtCore import Qt, QRect
 
 from asset_browser.core.models import Draft
@@ -418,6 +420,7 @@ def _sequence_first_frame(draft: Draft) -> Optional[str]:
 def _read_dpx_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
     """Read a DPX file and return a thumbnail as QPixmap via ffmpeg."""
     import subprocess
+    import numpy as np
     try:
         probe = subprocess.run(
             ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
