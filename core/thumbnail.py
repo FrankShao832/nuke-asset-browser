@@ -313,27 +313,25 @@ def _load_exr_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
             b = _downsample(b, nw, nh)
             pw, ph = nw, nh
 
-        # Auto-exposure + gamma 2.2 tone-map
+        # Tone-map: Reinhard log-average → gamma 2.2 → 8-bit
         def tonemap(rgb: np.ndarray) -> np.ndarray:
-            """Linear → auto-exposure → gamma 2.2 → 8-bit."""
-            # Luminance weights (Rec.709)
+            """Reinhard global tonemap with log-average key + gamma 2.2."""
             lum = 0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]
-            # Find 99th percentile luminance for auto-exposure
-            flat = lum.flatten()
-            flat.sort()
-            p99 = flat[max(0, int(len(flat) * 0.99) - 1)]
-            exposure = 1.0 / max(p99, 1e-6)
-            # Apply exposure, clamp, gamma
-            arr = np.clip(rgb * exposure, 0.0, 1.0)
+            # Log-average luminance (Reinhard 'key' value)
+            log_lum = np.log(np.maximum(lum, 1e-6))
+            avg_log = np.exp(np.mean(log_lum))
+            exposure = 1.0 / max(avg_log, 1e-6)
+            # Scale by exposure, then Reinhard global operator
+            arr = rgb * exposure
+            arr = arr / (1.0 + arr)  # L/(1+L) maps [0,∞) → [0,1)
+            # Gamma correction
             arr = np.power(arr, 1.0 / 2.2)
+            # Clamp just in case
+            np.clip(arr, 0.0, 1.0, out=arr)
             return (arr * 255.0).astype(np.uint8)
 
         rgb = np.stack((r, g, b), axis=-1)
         rgb_8 = tonemap(rgb)
-
-        r8 = tonemap(r)
-        g8 = tonemap(g)
-        b8 = tonemap(b)
 
         # Pack into QImage (RGB888)
         img = QImage(rgb_8.data, pw, ph, pw * 3, QImage.Format_RGB888)

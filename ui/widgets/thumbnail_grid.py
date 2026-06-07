@@ -314,7 +314,11 @@ class ThumbnailCard(QFrame):
     # ── Hover playback (sequence drafts) ────────────────────────────────
 
     def _init_playback_frames(self):
-        """Pre-compute source frame paths for sequence drafts."""
+        """Pre-compute source frame paths for sequence drafts.
+
+        Missing frames are filled with the last valid frame to avoid
+        visual jumps during playback.
+        """
         if not self._draft.sequence_pattern or not self._draft.frame_range:
             return
         folder = self._draft.path
@@ -326,12 +330,16 @@ class ThumbnailCard(QFrame):
             start, end = int(fr.split("-")[0]), int(fr.split("-")[1])
         except (ValueError, IndexError):
             return
-        self._playback_frames = [
-            os.path.join(folder, pattern % f)
-            for f in range(start, end + 1)
-            if os.path.isfile(os.path.join(folder, pattern % f))
-        ]
-        self._playback_cache: dict[str, str] = {}  # src → cached PNG path
+        frames: list[str] = []
+        last_valid = ""
+        for f in range(start, end + 1):
+            fp = os.path.join(folder, pattern % f)
+            if os.path.isfile(fp):
+                frames.append(fp)
+                last_valid = fp
+            elif last_valid:
+                frames.append(last_valid)  # fill gap with previous frame
+        self._playback_frames = frames
 
     def _playback_tick(self):
         """Advance to the next frame."""
