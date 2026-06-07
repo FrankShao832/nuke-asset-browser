@@ -39,6 +39,7 @@ _IMAGE_EXTS: set[str] = {
 _TYPE_STYLE: dict[str, tuple[QColor, str]] = {
     "template": (QColor("#2d5a8e"), "📄"),   # blue
     "image":    (QColor("#2d8e5a"), "🖼️"),    # green
+    "sequence": (QColor("#2d8e5a"), "🎞️"),    # green (same as image)
     "video":    (QColor("#8e2d2d"), "🎬"),    # red
     "script":   (QColor("#6a2d8e"), "📜"),    # purple
     "other":    (QColor("#555555"), "📁"),     # gray

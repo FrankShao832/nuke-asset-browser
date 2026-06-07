@@ -587,8 +587,9 @@ class ThumbnailGrid(QScrollArea):
             content.resize(vp_w, content.height())
             self._layout.setGeometry(QRect(0, 0, vp_w, content.height()))
 
-        # Lazy load thumbnails for visible cards
-        QTimer.singleShot(50, self._lazy_load_visible)
+        # Lazy load thumbnails for visible cards — immediate + delayed fallback
+        self._lazy_load_visible()
+        QTimer.singleShot(100, self._lazy_load_visible)
 
     def _add_card(self, draft: Draft):
         card = ThumbnailCard(draft, thumb_cache_dir=self._thumb_cache_dir)
