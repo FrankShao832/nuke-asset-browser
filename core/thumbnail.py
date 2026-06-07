@@ -252,9 +252,10 @@ def _load_exr_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
             b = _downsample(b, nw, nh)
             pw, ph = nw, nh
 
-        # Tone-map: simple linear to sRGB-ish, clamp to [0,1]
+        # Tone-map: linear → gamma 2.2 → sRGB-ish 8-bit
         def tonemap(arr: np.ndarray) -> np.ndarray:
-            arr = np.clip(arr, 0.0, 1.0)  # simple clamp
+            arr = np.clip(arr, 0.0, 1.0)
+            arr = np.power(arr, 1.0 / 2.2)  # gamma correction
             return (arr * 255.0).astype(np.uint8)
 
         r8 = tonemap(r)

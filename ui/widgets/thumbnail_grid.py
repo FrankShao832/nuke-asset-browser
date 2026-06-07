@@ -13,7 +13,7 @@ from PySide6.QtGui import QDrag, QPixmap, QColor
 
 from asset_browser.core.models import Draft
 from asset_browser.core.sequence import detect_sequences, detect_from_file
-from asset_browser.core.thumbnail import get_thumbnail, invalidate_cache, _CARD_W, _CARD_H
+from asset_browser.core.thumbnail import get_thumbnail, invalidate_cache, _load_pixmap_safe, _CARD_W, _CARD_H
 from asset_browser.ui.theme import Color, FontSize, Styles
 from asset_browser.ui.widgets.draft_badge import DraftBadge, FavoriteStar
 from asset_browser.utils.config import config
@@ -335,7 +335,7 @@ class ThumbnailCard(QFrame):
             return
         self._playback_index = (self._playback_index + 1) % len(self._playback_frames)
         path = self._playback_frames[self._playback_index]
-        pix = QPixmap(path)
+        pix = _load_pixmap_safe(path)
         if not pix.isNull():
             self._thumb_label.setPixmap(
                 pix.scaled(188, 108, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
