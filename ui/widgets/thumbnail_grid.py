@@ -149,10 +149,8 @@ class ThumbnailCard(QFrame):
         self._playback_timer.setInterval(42)  # ~24 fps
         self._playback_timer.timeout.connect(self._playback_tick)
         self._init_playback_frames()
-        # For video: kick off async frame extraction, show loading cursor
+        # For video: kick off async frame extraction
         if self._draft.draft_type == "video" and not self._playback_frames:
-            self._thumb_label.setText("🎬")
-            self._thumb_label.setStyleSheet(f"color: {Color.TEXT_MUTED}; font-size: 28px;")
             from PySide6.QtCore import QTimer as _QTimer
             _QTimer.singleShot(0, self._preload_video_frames)
         self.setFixedSize(200, 160)
@@ -364,6 +362,11 @@ class ThumbnailCard(QFrame):
         Runs in a deferred QTimer callback so the UI thread isn't blocked
         during card construction.
         """
+        # Show loading indicator while ffmpeg works
+        self._thumb_label.setText("🎬")
+        self._thumb_label.setStyleSheet(
+            f"color: {Color.TEXT_MUTED}; font-size: 28px;"
+        )
         frames = extract_video_frames(
             self._draft.path, count=30,
             cache_dir=self._thumb_cache_dir,
