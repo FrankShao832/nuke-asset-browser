@@ -395,16 +395,18 @@ class ThumbnailCard(QFrame):
         else:
             pix = _load_pixmap_safe(src)
             if not pix.isNull():
-                # Cache as PNG for next time
-                cache_dir = self._thumb_cache_dir or config.thumbnail_cache_dir
-                os.makedirs(cache_dir, exist_ok=True)
-                cache_name = f"play_{self._draft.id}_{self._playback_index:04d}.png"
-                cache_path = os.path.join(cache_dir, cache_name)
-                if pix.width() > 256 or pix.height() > 256:
-                    pix = pix.scaled(256, 256, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                pix.save(cache_path, "PNG")
-                self._playback_cache[src] = cache_path
-                pix = QPixmap(cache_path)  # reload cached copy
+                # Cache as PNG for next time (skip if already a PNG)
+                _, ext = os.path.splitext(src)
+                if ext.lower() != ".png":
+                    cache_dir = self._thumb_cache_dir or config.thumbnail_cache_dir
+                    os.makedirs(cache_dir, exist_ok=True)
+                    cache_name = f"play_{self._draft.id}_{self._playback_index:04d}.png"
+                    cache_path = os.path.join(cache_dir, cache_name)
+                    if pix.width() > 256 or pix.height() > 256:
+                        pix = pix.scaled(256, 256, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    pix.save(cache_path, "PNG")
+                    self._playback_cache[src] = cache_path
+                    pix = QPixmap(cache_path)  # reload cached copy
 
         if not pix.isNull():
             self._thumb_label.setPixmap(

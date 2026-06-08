@@ -12,7 +12,6 @@ Resolution priority for ``get_thumbnail()``:
 
 from __future__ import annotations
 
-import glob
 import os
 from typing import Optional
 
@@ -566,17 +565,34 @@ def _read_video_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
         return None
 
 
+def _get_video_duration(path: str) -> float:
+    """Return video duration in seconds via ffprobe (0.0 on failure)."""
+    import subprocess
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+             "-show_entries", "format=duration",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        if probe.returncode == 0:
+            return float(probe.stdout.strip())
+    except Exception:
+        pass
+    return 0.0
+
+
 def extract_video_frames(
     path: str,
     count: int = 24,
     max_dim: int = 256,
     cache_dir: str | None = None,
 ) -> list[str]:
-    """Extract *count* evenly-spaced frames from a video, save as PNGs.
+    """Extract *count* evenly-spaced frames from a video via ffmpeg.
 
-    Uses ffmpeg's ``select`` filter with ``gps`` (frames-per-set) for
-    even temporal distribution.  Cached PNGs are written to *cache_dir*
-    and re-used on subsequent calls.
+    Uses the ``fps`` filter to resample the video so that *count* frames
+    are output, evenly distributed across the full duration.  Cached PNGs
+    are written to *cache_dir* and re-used on subsequent calls.
 
     Args:
         path: Path to the video file.
@@ -600,48 +616,65 @@ def extract_video_frames(
     # Derive a stable cache key from the video file path
     import hashlib
     key = hashlib.md5(path.encode("utf-8")).hexdigest()[:12]
-    expected: list[str] = []
 
-    # Quick check: if all frames already cached, skip ffmpeg
-    all_cached = True
+    # ── Check cache ────────────────────────────────────────────────────
+    cached: list[str] = []
     for i in range(count):
         dst = os.path.join(cache_base, f"vid_{key}_{i:04d}.png")
-        expected.append(dst)
-        if not os.path.isfile(dst):
-            all_cached = False
+        if os.path.isfile(dst):
+            cached.append(dst)
+        else:
+            cached = []
+            break
 
-    if all_cached:
-        return expected
+    if len(cached) == count:
+        return cached
 
+    # ── Extract frames ─────────────────────────────────────────────────
     try:
-        # ffmpeg: select evenly-spaced frames
-        # -skip_frame nokey keeps only keyframes for speed
+        # Get duration so we can calculate output framerate
+        duration = _get_video_duration(path)
+        if duration <= 0:
+            # Fallback: assume 24fps and extract via frame-step
+            logger.debug("Video duration unknown for %s, using frame-step", path)
+            out_fps = max(1.0, count / 10.0)
+        else:
+            out_fps = max(1.0, count / duration)
+
+        pattern = os.path.join(cache_base, f"vid_{key}_%04d.png")
         proc = subprocess.run(
             [
                 "ffmpeg", "-v", "quiet", "-i", path,
-                "-vf", f"select='not(mod(n,{max(1, 100)}))',"
-                       f"scale={max_dim}:-2",
-                "-vsync", "vfr",
+                "-vf", f"fps={out_fps},scale={max_dim}:-2",
                 "-frames:v", str(count),
-                "-f", "image2",
-                f"{cache_base}/vid_{key}_%04d.png",
+                "-y",
+                pattern,
             ],
             capture_output=True, timeout=300,
         )
         if proc.returncode != 0:
-            logger.warning("ffmpeg frame extraction failed: %s", path)
+            logger.warning("ffmpeg frame extraction failed (%s): %s",
+                           proc.returncode, path)
             return []
 
-        # Renumber sequentially (ffmpeg numbers from 1, not 0)
-        existing = sorted(
-            glob.glob(os.path.join(cache_base, f"vid_{key}_*.png"))
-        )
-        for i, src in enumerate(existing):
+        # Collect extracted files, pad to exactly *count*
+        import glob as _glob
+        extracted = sorted(_glob.glob(os.path.join(cache_base, f"vid_{key}_*.png")))
+        # ffmpeg numbers from 1; pad/rename to 0-based index
+        for i, src in enumerate(extracted):
             dst = os.path.join(cache_base, f"vid_{key}_{i:04d}.png")
             if src != dst:
                 os.replace(src, dst)
 
-        return sorted(glob.glob(os.path.join(cache_base, f"vid_{key}_*.png")))
+        result = sorted(_glob.glob(os.path.join(cache_base, f"vid_{key}_*.png")))
+        # Fill missing slots with the last available frame
+        while len(result) < count and result:
+            result.append(result[-1])
+        # Truncate if more than count
+        result = result[:count]
+
+        logger.debug("Extracted %d/%d video frames for %s", len(result), count, path)
+        return result
 
     except subprocess.TimeoutExpired:
         logger.warning("ffmpeg timeout extracting frames: %s", path)
