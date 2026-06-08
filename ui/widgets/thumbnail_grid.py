@@ -492,6 +492,7 @@ class ThumbnailGrid(QScrollArea):
     favorite_toggled = Signal(int, bool)
     delete_requested = Signal(int)
     draft_dropped = Signal(object)  # Draft — created from drag-drop
+    drafts_dropped = Signal(list)   # list[Draft] — batch from multi-file drop
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -563,13 +564,19 @@ class ThumbnailGrid(QScrollArea):
         if not urls:
             return
 
+        drafts: list[Draft] = []
         for url in urls:
             if not url.isLocalFile():
                 continue
             path = url.toLocalFile()
             draft = self._draft_from_drop(path)
             if draft:
-                self.draft_dropped.emit(draft)
+                drafts.append(draft)
+
+        if len(drafts) == 1:
+            self.draft_dropped.emit(drafts[0])
+        elif len(drafts) > 1:
+            self.drafts_dropped.emit(drafts)
 
         event.acceptProposedAction()
 

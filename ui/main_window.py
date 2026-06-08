@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
+    QProgressBar,
 )
 from PySide6.QtCore import Qt
 
@@ -150,6 +151,28 @@ class MainWindow(QWidget):
 
         self._storage_label = QLabel("🟢  PostgreSQL")
         status_layout.addWidget(self._storage_label)
+
+        # ── Import progress bar (hidden by default) ──
+        self._import_progress = QProgressBar()
+        self._import_progress.setFixedSize(220, 16)
+        self._import_progress.setTextVisible(True)
+        self._import_progress.setVisible(False)
+        self._import_progress.setStyleSheet("""
+            QProgressBar {
+                background: #3a3a3a;
+                border: 1px solid #555;
+                border-radius: 3px;
+                text-align: center;
+                font-size: 11px;
+                color: #ccc;
+            }
+            QProgressBar::chunk {
+                background: #3a7bd5;
+                border-radius: 2px;
+            }
+        """)
+        status_layout.addWidget(self._import_progress)
+
         status_layout.addStretch()
 
         self._count_label = QLabel()
@@ -170,6 +193,7 @@ class MainWindow(QWidget):
         self._grid.delete_requested.connect(self._on_delete_draft)
         self._grid.favorite_toggled.connect(self._on_favorite_toggled)
         self._grid.draft_dropped.connect(self._on_draft_dropped)
+        self._grid.drafts_dropped.connect(self._on_drafts_dropped)
 
     def _load_drafts(self, drafts: list[Draft]):
         self._drafts = drafts
@@ -345,11 +369,29 @@ class MainWindow(QWidget):
         Toast.appear(self, f"🗑️ Deleted: {draft.name}", Toast.SUCCESS)
 
     def _on_draft_dropped(self, draft: Draft):
-        """Handle a draft created from a folder/file drag-drop."""
+        """Handle a single draft from drag-drop."""
         added = self._store.add_draft(draft)
         self._load_drafts(self._store.list_drafts())
         self._refresh()
         Toast.appear(self, f"📥 Imported: {draft.name}", Toast.SUCCESS)
+
+    def _on_drafts_dropped(self, drafts: list[Draft]):
+        """Handle a batch of drafts from drag-drop (multi-file drop)."""
+        total = len(drafts)
+        self._import_progress.setRange(0, total)
+        self._import_progress.setValue(0)
+        self._import_progress.setVisible(True)
+        self._import_progress.repaint()
+
+        for i, draft in enumerate(drafts):
+            self._store.add_draft(draft)
+            self._import_progress.setValue(i + 1)
+            self._import_progress.setFormat(f"Importing {i + 1}/{total}…")
+
+        self._load_drafts(self._store.list_drafts())
+        self._refresh()
+        self._import_progress.setVisible(False)
+        Toast.appear(self, f"📥 Imported {total} drafts", Toast.SUCCESS)
 
     def _on_favorite_toggled(self, draft_id: int, new_state: bool):
         draft = self._store.get_draft(draft_id)
