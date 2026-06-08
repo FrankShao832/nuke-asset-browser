@@ -493,6 +493,7 @@ class ThumbnailGrid(QScrollArea):
     delete_requested = Signal(int)
     draft_dropped = Signal(object)  # Draft — created from drag-drop
     drafts_dropped = Signal(list)   # list[Draft] — batch from multi-file drop
+    drop_started = Signal()         # Emitted at start of dropEvent processing
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -563,6 +564,8 @@ class ThumbnailGrid(QScrollArea):
         urls = event.mimeData().urls()
         if not urls:
             return
+
+        self.drop_started.emit()
 
         drafts: list[Draft] = []
         for url in urls:

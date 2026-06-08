@@ -194,6 +194,7 @@ class MainWindow(QWidget):
         self._grid.favorite_toggled.connect(self._on_favorite_toggled)
         self._grid.draft_dropped.connect(self._on_draft_dropped)
         self._grid.drafts_dropped.connect(self._on_drafts_dropped)
+        self._grid.drop_started.connect(self._show_import_progress)
 
     def _load_drafts(self, drafts: list[Draft]):
         self._drafts = drafts
@@ -368,29 +369,60 @@ class MainWindow(QWidget):
         self._refresh()
         Toast.appear(self, f"🗑️ Deleted: {draft.name}", Toast.SUCCESS)
 
+    def _show_import_progress(self, total: int = 0):
+        """Show the import progress bar.
+
+        Args:
+            total: If > 1, shows determinate progress (X/total).
+                   Otherwise shows an indeterminate spinner (single item).
+        """
+        from PySide6.QtCore import QCoreApplication
+
+        if total > 1:
+            self._import_progress.setRange(0, total)
+            self._import_progress.setValue(0)
+            self._import_progress.setFormat(f"Importing 0/{total}…")
+        else:
+            self._import_progress.setRange(0, 0)  # indeterminate
+            self._import_progress.setFormat("Processing…")
+        self._import_progress.setVisible(True)
+        QCoreApplication.processEvents()
+
+    def _hide_import_progress(self):
+        """Hide the import progress bar."""
+        from PySide6.QtCore import QCoreApplication
+
+        self._import_progress.setVisible(False)
+        QCoreApplication.processEvents()
+
     def _on_draft_dropped(self, draft: Draft):
-        """Handle a single draft from drag-drop."""
+        """Handle a single draft from drag-drop (progress bar already shown by drop_started)."""
         added = self._store.add_draft(draft)
         self._load_drafts(self._store.list_drafts())
         self._refresh()
+        self._hide_import_progress()
         Toast.appear(self, f"📥 Imported: {draft.name}", Toast.SUCCESS)
 
     def _on_drafts_dropped(self, drafts: list[Draft]):
         """Handle a batch of drafts from drag-drop (multi-file drop)."""
+        from PySide6.QtCore import QCoreApplication
+
         total = len(drafts)
+        # Switch from indeterminate to determinate now that we know the count
         self._import_progress.setRange(0, total)
         self._import_progress.setValue(0)
-        self._import_progress.setVisible(True)
-        self._import_progress.repaint()
+        self._import_progress.setFormat(f"Importing 0/{total}…")
+        QCoreApplication.processEvents()
 
         for i, draft in enumerate(drafts):
             self._store.add_draft(draft)
             self._import_progress.setValue(i + 1)
             self._import_progress.setFormat(f"Importing {i + 1}/{total}…")
+            QCoreApplication.processEvents()
 
         self._load_drafts(self._store.list_drafts())
         self._refresh()
-        self._import_progress.setVisible(False)
+        self._hide_import_progress()
         Toast.appear(self, f"📥 Imported {total} drafts", Toast.SUCCESS)
 
     def _on_favorite_toggled(self, draft_id: int, new_state: bool):
