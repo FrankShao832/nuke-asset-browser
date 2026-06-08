@@ -144,10 +144,17 @@ class ThumbnailCard(QFrame):
         self._playback_frames: list[str] = []
         self._playback_cache: dict[str, str] = {}  # src → cached PNG path
         self._playback_index = 0
+        self._playback_ready = False  # only True once frames are loaded
         self._playback_timer = QTimer(self)
         self._playback_timer.setInterval(42)  # ~24 fps
         self._playback_timer.timeout.connect(self._playback_tick)
         self._init_playback_frames()
+        # For video: kick off async frame extraction, show loading cursor
+        if self._draft.draft_type == "video" and not self._playback_frames:
+            self._thumb_label.setText("🎬")
+            self._thumb_label.setStyleSheet(f"color: {Color.TEXT_MUTED}; font-size: 28px;")
+            from PySide6.QtCore import QTimer as _QTimer
+            _QTimer.singleShot(0, self._preload_video_frames)
         self.setFixedSize(200, 160)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet(Styles.card())
@@ -321,12 +328,9 @@ class ThumbnailCard(QFrame):
         Missing frames are filled with the last valid frame to avoid
         visual jumps during playback.
         """
-        # ── Video draft → extract frames via ffmpeg ──
+        # ── Video draft → extract frames via ffmpeg (async) ──
         if self._draft.draft_type == "video":
-            self._playback_frames = extract_video_frames(
-                self._draft.path, count=30,
-                cache_dir=self._thumb_cache_dir,
-            )
+            # Frames are pre-loaded asynchronously in _preload_video_frames
             return
 
         # ── Sequence draft → enumerate frame files ──
@@ -351,6 +355,27 @@ class ThumbnailCard(QFrame):
             elif last_valid:
                 frames.append(last_valid)  # fill gap with previous frame
         self._playback_frames = frames
+        if frames:
+            self._playback_ready = True
+
+    def _preload_video_frames(self):
+        """Asynchronously extract video frames for playback.
+
+        Runs in a deferred QTimer callback so the UI thread isn't blocked
+        during card construction.
+        """
+        frames = extract_video_frames(
+            self._draft.path, count=30,
+            cache_dir=self._thumb_cache_dir,
+        )
+        self._playback_frames = frames
+        if frames:
+            self._playback_ready = True
+            # Refresh thumbnail with the first frame
+            self._thumbnail = None
+            self._thumb_label.setText("")
+            self._thumb_label.setStyleSheet("")
+            self._update_thumb()
 
     def _playback_tick(self):
         """Advance to the next frame."""
@@ -385,7 +410,7 @@ class ThumbnailCard(QFrame):
 
     def enterEvent(self, event):
         super().enterEvent(event)
-        if self._playback_frames:
+        if self._playback_frames and self._playback_ready:
             self._playback_index = 0
             self._playback_timer.start()
 

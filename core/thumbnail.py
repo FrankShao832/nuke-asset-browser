@@ -126,7 +126,14 @@ def get_thumbnail(
         pix = _load_pixmap_safe(draft.path)
         if not pix.isNull():
             logger.debug("Loaded image thumbnail from %s", draft.path)
-            # Cache it for next time
+            _cache_pixmap(draft.id, pix, thumb_cache_dir)
+            return pix.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+
+    # 3b. Video file — extract first frame thumbnail
+    if _is_video_file(draft.path):
+        pix = _load_pixmap_safe(draft.path)
+        if not pix.isNull():
+            logger.debug("Loaded video thumbnail from %s", draft.path)
             _cache_pixmap(draft.id, pix, thumb_cache_dir)
             return pix.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
 
@@ -370,6 +377,12 @@ def _is_image_file(path: str) -> bool:
     """Return True if *path* looks like a readable image file."""
     ext = os.path.splitext(path)[1].lower()
     return ext in _IMAGE_EXTS and os.path.isfile(path)
+
+
+def _is_video_file(path: str) -> bool:
+    """Return True if *path* looks like a video file."""
+    ext = os.path.splitext(path)[1].lower()
+    return ext in VIDEO_EXTS and os.path.isfile(path)
 
 
 def _cached_path(draft_id: int, thumb_cache_dir: str) -> Optional[str]:
