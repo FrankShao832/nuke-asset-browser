@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFileDialog,
     QProgressBar,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QCoreApplication
 
 from asset_browser.core.models import MOCK_DRAFTS, Draft
 from asset_browser.core.search import DraftSearch
@@ -152,7 +152,9 @@ class MainWindow(QWidget):
         self._storage_label = QLabel("🟢  PostgreSQL")
         status_layout.addWidget(self._storage_label)
 
-        # ── Import progress bar (hidden by default) ──
+        # ── Centered spacer + import progress + spacer ──
+        status_layout.addStretch()
+
         self._import_progress = QProgressBar()
         self._import_progress.setFixedSize(220, 16)
         self._import_progress.setTextVisible(True)
@@ -370,39 +372,23 @@ class MainWindow(QWidget):
         Toast.appear(self, f"🗑️ Deleted: {draft.name}", Toast.SUCCESS)
 
     def _show_import_progress(self, total: int = 0):
-        """Show a progress indicator in the status bar.
-
-        Falls back to status-label text when the progress bar cannot
-        paint immediately (macOS drag-drop context).
-        """
-        self._saved_status = self._status_label.text()
-
+        """Show a progress indicator in the status bar."""
         if total > 1:
             self._import_progress.setRange(0, total)
             self._import_progress.setValue(0)
             self._import_progress.setFormat(f"Importing 0/{total}…")
-            self._import_progress.setVisible(True)
-            self._status_label.setText(f"⏳ Importing 0/{total}…")
         else:
             self._import_progress.setRange(0, 0)  # indeterminate
-            self._import_progress.setFormat("⏳ Processing…")
-            self._import_progress.setVisible(True)
-            self._status_label.setText("⏳ Processing…")
-
-        # Force immediate UI refresh
-        self._status_label.repaint()
+            self._import_progress.setFormat("Processing…")
+        self._import_progress.setVisible(True)
         self._import_progress.repaint()
 
     def _hide_import_progress(self):
-        """Hide the import progress bar and restore the status label."""
+        """Hide the import progress bar."""
         self._import_progress.setVisible(False)
-        self._update_status()
 
     def _on_draft_dropped(self, draft: Draft):
         """Handle a single draft from drag-drop (progress bar already shown by drop_started)."""
-        self._status_label.setText(f"⏳ Importing {draft.name}…")
-        self._status_label.repaint()
-
         added = self._store.add_draft(draft)
         self._load_drafts(self._store.list_drafts())
         self._refresh()
@@ -411,23 +397,23 @@ class MainWindow(QWidget):
 
     def _on_drafts_dropped(self, drafts: list[Draft]):
         """Handle a batch of drafts from drag-drop (multi-file drop)."""
-        from PySide6.QtCore import QCoreApplication
-
         total = len(drafts)
         # Switch from indeterminate to determinate now that we know the count
         self._import_progress.setRange(0, total)
         self._import_progress.setValue(0)
         self._import_progress.setFormat(f"Importing 0/{total}…")
-        self._status_label.setText(f"⏳ Importing 0/{total}…")
         QCoreApplication.processEvents()
 
         for i, draft in enumerate(drafts):
             self._store.add_draft(draft)
             self._import_progress.setValue(i + 1)
-            msg = f"⏳ Importing {i + 1}/{total}…"
-            self._import_progress.setFormat(msg)
-            self._status_label.setText(msg)
+            self._import_progress.setFormat(f"Importing {i + 1}/{total}…")
             QCoreApplication.processEvents()
+
+        self._load_drafts(self._store.list_drafts())
+        self._refresh()
+        self._hide_import_progress()
+        Toast.appear(self, f"📥 Imported {total} drafts", Toast.SUCCESS)
 
         self._load_drafts(self._store.list_drafts())
         self._refresh()
