@@ -12,6 +12,7 @@ Resolution priority for ``get_thumbnail()``:
 
 from __future__ import annotations
 
+import glob
 import os
 from typing import Optional
 
@@ -34,6 +35,11 @@ _CARD_W, _CARD_H = 200, 108  # thumbnail area inside ThumbnailCard
 _IMAGE_EXTS: set[str] = {
     ".exr", ".png", ".jpg", ".jpeg", ".tif", ".tiff",
     ".tga", ".dpx", ".bmp", ".gif", ".webp", ".svg",
+}
+
+# Video formats — thumbnails extracted via ffmpeg first-frame decode
+VIDEO_EXTS: set[str] = {
+    ".mov", ".mp4", ".m4v", ".avi", ".mxf", ".webm", ".wmv", ".flv",
 }
 
 # ── Placeholder (fallback) ──────────────────────────────────────────────
@@ -263,6 +269,11 @@ def _load_pixmap_safe(path: str) -> QPixmap:
         if dpx_pix and not dpx_pix.isNull():
             return dpx_pix
 
+    if ext in VIDEO_EXTS:
+        vid_pix = _read_video_thumbnail(path)
+        if vid_pix and not vid_pix.isNull():
+            return vid_pix
+
     logger.debug("Could not load image: %s", path)
     return pix  # null pixmap
 
@@ -466,3 +477,162 @@ def _read_dpx_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
     except Exception as exc:
         logger.warning("Failed to read DPX thumbnail %s: %s", path, exc)
         return None
+
+
+# ── Video thumbnail / frame extraction ─────────────────────────────────
+
+_FFMPEG_AVAILABLE: bool | None = None
+
+
+def _ffmpeg_ok() -> bool:
+    """Check whether ffmpeg is available on this system (cached)."""
+    global _FFMPEG_AVAILABLE  # noqa: PLW0603
+    if _FFMPEG_AVAILABLE is None:
+        import shutil
+        _FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
+    return _FFMPEG_AVAILABLE
+
+
+def _read_video_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
+    """Extract the **first frame** of a video as a QPixmap via ffmpeg.
+
+    Args:
+        path: Path to a video file (``.mov``, ``.mp4``, …).
+        max_dim: Maximum width/height for the thumbnail.
+
+    Returns:
+        QPixmap or ``None`` on failure.
+    """
+    import subprocess
+
+    if not _ffmpeg_ok():
+        logger.warning("ffmpeg not found — cannot decode video: %s", path)
+        return None
+
+    try:
+        # 1) Probe video dimensions
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height",
+             "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        if probe.returncode != 0:
+            return None
+        parts = probe.stdout.strip().split(",")
+        if len(parts) != 2:
+            return None
+        pw, ph = int(parts[0]), int(parts[1])
+        if pw < 1 or ph < 1 or pw > 32768 or ph > 32768:
+            return None
+
+        # 2) Scale down respecting aspect ratio
+        scale = min(max_dim / pw, max_dim / ph, 1.0)
+        nw = max(1, int(pw * scale))
+        nh = max(1, int(ph * scale))
+
+        # 3) Decode first frame
+        proc = subprocess.run(
+            ["ffmpeg", "-v", "quiet", "-i", path,
+             "-frames:v", "1", "-f", "rawvideo",
+             "-pix_fmt", "rgb24", "-s", f"{nw}x{nh}", "-"],
+            capture_output=True, timeout=120,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return None
+
+        raw = np.frombuffer(proc.stdout, dtype=np.uint8).reshape(nh, nw, 3)
+        img = QImage(raw.data, nw, nh, nw * 3, QImage.Format_RGB888)
+        return QPixmap.fromImage(img)
+
+    except subprocess.TimeoutExpired:
+        logger.warning("ffmpeg timeout for video: %s", path)
+        return None
+    except Exception as exc:
+        logger.warning("Failed to read video thumbnail %s: %s", path, exc)
+        return None
+
+
+def extract_video_frames(
+    path: str,
+    count: int = 24,
+    max_dim: int = 256,
+    cache_dir: str | None = None,
+) -> list[str]:
+    """Extract *count* evenly-spaced frames from a video, save as PNGs.
+
+    Uses ffmpeg's ``select`` filter with ``gps`` (frames-per-set) for
+    even temporal distribution.  Cached PNGs are written to *cache_dir*
+    and re-used on subsequent calls.
+
+    Args:
+        path: Path to the video file.
+        count: Number of frames to extract (default 24).
+        max_dim: Maximum dimension of extracted frames.
+        cache_dir: Where to write PNG cache files.  If ``None``, uses
+                   the default ``thumbnail_cache_dir`` from config.
+
+    Returns:
+        Sorted list of cached PNG paths (empty on failure).
+    """
+    import subprocess
+    from asset_browser.utils.config import config as cfg
+
+    if not _ffmpeg_ok():
+        return []
+
+    cache_base = cache_dir or cfg.thumbnail_cache_dir
+    os.makedirs(cache_base, exist_ok=True)
+
+    # Derive a stable cache key from the video file path
+    import hashlib
+    key = hashlib.md5(path.encode("utf-8")).hexdigest()[:12]
+    expected: list[str] = []
+
+    # Quick check: if all frames already cached, skip ffmpeg
+    all_cached = True
+    for i in range(count):
+        dst = os.path.join(cache_base, f"vid_{key}_{i:04d}.png")
+        expected.append(dst)
+        if not os.path.isfile(dst):
+            all_cached = False
+
+    if all_cached:
+        return expected
+
+    try:
+        # ffmpeg: select evenly-spaced frames
+        # -skip_frame nokey keeps only keyframes for speed
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-v", "quiet", "-i", path,
+                "-vf", f"select='not(mod(n,{max(1, 100)}))',"
+                       f"scale={max_dim}:-2",
+                "-vsync", "vfr",
+                "-frames:v", str(count),
+                "-f", "image2",
+                f"{cache_base}/vid_{key}_%04d.png",
+            ],
+            capture_output=True, timeout=300,
+        )
+        if proc.returncode != 0:
+            logger.warning("ffmpeg frame extraction failed: %s", path)
+            return []
+
+        # Renumber sequentially (ffmpeg numbers from 1, not 0)
+        existing = sorted(
+            glob.glob(os.path.join(cache_base, f"vid_{key}_*.png"))
+        )
+        for i, src in enumerate(existing):
+            dst = os.path.join(cache_base, f"vid_{key}_{i:04d}.png")
+            if src != dst:
+                os.replace(src, dst)
+
+        return sorted(glob.glob(os.path.join(cache_base, f"vid_{key}_*.png")))
+
+    except subprocess.TimeoutExpired:
+        logger.warning("ffmpeg timeout extracting frames: %s", path)
+        return []
+    except Exception as exc:
+        logger.warning("Failed to extract video frames %s: %s", path, exc)
+        return []

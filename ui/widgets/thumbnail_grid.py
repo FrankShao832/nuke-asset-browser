@@ -15,7 +15,7 @@ from asset_browser.core.models import Draft
 from asset_browser.core.sequence import detect_sequences, detect_from_file
 from asset_browser.core.thumbnail import (
     get_thumbnail, invalidate_cache, _load_pixmap_safe,
-    _CARD_W, _CARD_H,
+    _CARD_W, _CARD_H, VIDEO_EXTS, extract_video_frames,
 )
 from asset_browser.ui.theme import Color, FontSize, Styles
 from asset_browser.ui.widgets.draft_badge import DraftBadge, FavoriteStar
@@ -314,11 +314,22 @@ class ThumbnailCard(QFrame):
     # ── Hover playback (sequence drafts) ────────────────────────────────
 
     def _init_playback_frames(self):
-        """Pre-compute source frame paths for sequence drafts.
+        """Pre-compute source frame paths for sequence/video drafts.
 
+        - **Sequence:** enumerates frame files from ``frame_range``.
+        - **Video:** extracts evenly-spaced frames via ffmpeg.
         Missing frames are filled with the last valid frame to avoid
         visual jumps during playback.
         """
+        # ── Video draft → extract frames via ffmpeg ──
+        if self._draft.draft_type == "video":
+            self._playback_frames = extract_video_frames(
+                self._draft.path, count=30,
+                cache_dir=self._thumb_cache_dir,
+            )
+            return
+
+        # ── Sequence draft → enumerate frame files ──
         if not self._draft.sequence_pattern or not self._draft.frame_range:
             return
         folder = self._draft.path
@@ -533,7 +544,7 @@ class ThumbnailGrid(QScrollArea):
         event.acceptProposedAction()
 
     def _draft_from_drop(self, path: str) -> Draft | None:
-        """Create a Draft from a dropped folder or sequence frame file."""
+        """Create a Draft from a dropped folder, sequence frame, or video file."""
         import time
 
         if os.path.isdir(path):
@@ -541,10 +552,31 @@ class ThumbnailGrid(QScrollArea):
             if not seqs:
                 return None
             seq = seqs[0]
+            draft_type = "sequence"
         elif os.path.isfile(path):
+            ext = os.path.splitext(path)[1].lower()
+            # Single video file
+            if ext in VIDEO_EXTS:
+                name = os.path.splitext(os.path.basename(path))[0]
+                draft_id = self._next_draft_id
+                self._next_draft_id -= 1
+                return Draft(
+                    id=draft_id,
+                    name=name,
+                    draft_type="video",
+                    path=path,
+                    author="frank",
+                    status="draft",
+                    description=f"Video: {os.path.basename(path)}",
+                    tags=[ext.lstrip(".")],
+                    created_at=time.strftime("%Y-%m-%d"),
+                    updated_at=time.strftime("%Y-%m-%d"),
+                )
+            # Try sequence frame detection
             seq = detect_from_file(path)
             if not seq:
                 return None
+            draft_type = "sequence"
         else:
             return None
 
