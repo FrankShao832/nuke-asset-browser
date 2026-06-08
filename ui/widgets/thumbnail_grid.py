@@ -502,6 +502,7 @@ class ThumbnailGrid(QScrollArea):
         self._thumb_cache_dir = config.thumbnail_cache_dir
         self._layout = FlowLayout(spacing=8, margin=8)
         self._next_draft_id = -1  # negative IDs for dropped drafts
+        self._pending_urls: list[QUrl] = []  # buffered by dropEvent
 
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -565,23 +566,30 @@ class ThumbnailGrid(QScrollArea):
         if not urls:
             return
 
+        # Defer to next event-loop cycle so the UI can repaint the
+        # progress indicator before potentially expensive I/O.
+        self._pending_urls = [u for u in urls if u.isLocalFile()]
         self.drop_started.emit()
+        QTimer.singleShot(0, self._process_pending_drops)
+        event.acceptProposedAction()
 
+    def _process_pending_drops(self):
+        """Process URLs saved by *dropEvent* (called via singleShot)."""
         drafts: list[Draft] = []
-        for url in urls:
-            if not url.isLocalFile():
-                continue
+        for url in self._pending_urls:
             path = url.toLocalFile()
             draft = self._draft_from_drop(path)
             if draft:
                 drafts.append(draft)
 
+        if not drafts:
+            return
         if len(drafts) == 1:
             self.draft_dropped.emit(drafts[0])
-        elif len(drafts) > 1:
+        else:
             self.drafts_dropped.emit(drafts)
 
-        event.acceptProposedAction()
+        self._pending_urls = []
 
     def _draft_from_drop(self, path: str) -> Draft | None:
         """Create a Draft from a dropped folder, sequence frame, or video file."""
