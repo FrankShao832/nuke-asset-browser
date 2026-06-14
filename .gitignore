@@ -22,6 +22,9 @@ env/
 # Private — project planning docs, not for git
 plan/
 
+# Agent memory — belongs in agent workspace, not in project
+memory/
+
 # Temp / cache
 *.log
 .tmp/
