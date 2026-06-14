@@ -167,9 +167,6 @@ cd asset_browser
 conda run -p env pytest tests/ -q
 ```
 
-## Demo Script
-
-A walkthrough demo script (silent, ~2 min) is available at `plan/DEMO_SCRIPT.md` — moved out of repo root to keep the project tree clean.
 
 ## License
 
