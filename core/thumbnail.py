@@ -444,9 +444,14 @@ def _read_dpx_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
     """Read a DPX file and return a thumbnail as QPixmap via ffmpeg."""
     import subprocess
     import numpy as np
+
+    if not _ffmpeg_ok():
+        logger.warning("ffmpeg not found — cannot decode DPX: %s", path)
+        return None
+
     try:
         probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+            [_FFPROBE_PATH, "-v", "quiet", "-select_streams", "v:0",
              "-show_entries", "stream=width,height",
              "-of", "csv=p=0", path],
             capture_output=True, text=True, timeout=15,
@@ -466,7 +471,7 @@ def _read_dpx_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
         nh = max(1, int(ph * scale))
 
         proc = subprocess.run(
-            ["ffmpeg", "-v", "quiet", "-i", path,
+            [_FFMPEG_PATH, "-v", "quiet", "-i", path,
              "-frames:v", "1", "-f", "rawvideo",
              "-pix_fmt", "rgb24", "-s", f"{nw}x{nh}", "-"],
             capture_output=True, timeout=30,
@@ -494,14 +499,53 @@ def _read_dpx_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
 # ── Video thumbnail / frame extraction ─────────────────────────────────
 
 _FFMPEG_AVAILABLE: bool | None = None
+_FFMPEG_PATH: str | None = None      # full path to ffmpeg binary
+_FFPROBE_PATH: str | None = None     # full path to ffprobe binary
 
 
 def _ffmpeg_ok() -> bool:
-    """Check whether ffmpeg is available on this system (cached)."""
-    global _FFMPEG_AVAILABLE  # noqa: PLW0603
-    if _FFMPEG_AVAILABLE is None:
-        import shutil
-        _FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
+    """Check whether ffmpeg/ffprobe is available on this system.
+
+    Caches the result and stores the full binary paths so callers
+    can use ``_FFMPEG_PATH`` / ``_FFPROBE_PATH`` to avoid PATH issues.
+
+    Falls back to common install locations if ``shutil.which`` fails.
+    """
+    global _FFMPEG_AVAILABLE, _FFMPEG_PATH, _FFPROBE_PATH  # noqa: PLW0603
+    if _FFMPEG_AVAILABLE is not None:
+        return _FFMPEG_AVAILABLE
+
+    import shutil
+
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if ffmpeg and ffprobe:
+        _FFMPEG_PATH = ffmpeg
+        _FFPROBE_PATH = ffprobe
+        _FFMPEG_AVAILABLE = True
+        return True
+
+    # Fallback: scan common install locations (covers Nuke GUI-app
+    # launches where PATH is minimal, e.g. ``/usr/bin:/bin:/usr/sbin``)
+    _COMMON_BINS = [
+        "/usr/local/bin/ffmpeg",
+        "/opt/homebrew/bin/ffmpeg",
+        "/opt/local/bin/ffmpeg",
+        "/usr/local/bin/ffprobe",
+        "/opt/homebrew/bin/ffprobe",
+        "/opt/local/bin/ffprobe",
+    ]
+
+    ffmpeg = next((p for p in _COMMON_BINS if p.endswith("ffmpeg") and os.path.isfile(p)), None)
+    ffprobe = next((p for p in _COMMON_BINS if p.endswith("ffprobe") and os.path.isfile(p)), None)
+
+    if ffmpeg and ffprobe:
+        _FFMPEG_PATH = ffmpeg
+        _FFPROBE_PATH = ffprobe
+        _FFMPEG_AVAILABLE = True
+    else:
+        _FFMPEG_AVAILABLE = False
+
     return _FFMPEG_AVAILABLE
 
 
@@ -524,7 +568,7 @@ def _read_video_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
     try:
         # 1) Probe video dimensions
         probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+            [_FFPROBE_PATH, "-v", "quiet", "-select_streams", "v:0",
              "-show_entries", "stream=width,height",
              "-of", "csv=p=0", path],
             capture_output=True, text=True, timeout=15,
@@ -545,7 +589,7 @@ def _read_video_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
 
         # 3) Decode first frame
         proc = subprocess.run(
-            ["ffmpeg", "-v", "quiet", "-i", path,
+            [_FFMPEG_PATH, "-v", "quiet", "-i", path,
              "-frames:v", "1", "-f", "rawvideo",
              "-pix_fmt", "rgb24", "-s", f"{nw}x{nh}", "-"],
             capture_output=True, timeout=120,
@@ -568,9 +612,11 @@ def _read_video_thumbnail(path: str, max_dim: int = 512) -> Optional[QPixmap]:
 def _get_video_duration(path: str) -> float:
     """Return video duration in seconds via ffprobe (0.0 on failure)."""
     import subprocess
+    if not _ffmpeg_ok():
+        return 0.0
     try:
         probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-select_streams", "v:0",
+            [_FFPROBE_PATH, "-v", "quiet", "-select_streams", "v:0",
              "-show_entries", "format=duration",
              "-of", "csv=p=0", path],
             capture_output=True, text=True, timeout=15,
@@ -644,7 +690,7 @@ def extract_video_frames(
         pattern = os.path.join(cache_base, f"vid_{key}_%04d.png")
         proc = subprocess.run(
             [
-                "ffmpeg", "-v", "quiet", "-i", path,
+                _FFMPEG_PATH, "-v", "quiet", "-i", path,
                 "-vf", f"fps={out_fps},scale={max_dim}:-2",
                 "-frames:v", str(count),
                 "-y",
